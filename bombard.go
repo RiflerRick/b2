@@ -10,8 +10,8 @@ The TEMP_TABLE_PREP_SIZE_RATIO environment variable dictates the percentage rows
 
 /*
 options:
-host: db host*
-user:* user*name
+host: db host
+user: username
 password*: password if to be given on the command line
 ask-pass: ask for the password at runtime
 database: name of the database
