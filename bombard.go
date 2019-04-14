@@ -80,9 +80,112 @@ QueryBatch defines the batch of queries to be executed
 q is the query defined, sleep is the sleep time between queries in milliseconds, size is the number of queries in the batch
 */
 type QueryBatch struct {
-	q     Query
+	q     []Query
+	db    *sql.DB
 	sleep int
 	size  int
+}
+
+func (q Query) executeRead(db *sql.DB) *sql.Rows {
+	st := time.Now()
+	rows, err := db.Query(q.query)
+	et := time.Now()
+	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+	if err != nil {
+		glog.Fatal(err)
+	}
+	defer rows.Close()
+	// as long as there is an open result set(represented by rows), the underlying connection is busy and can't be used for any other query
+	// That means it is not available in the connection pool. If you iterate over all the rows with rows.Next(), eventually you'll read the last row and rows.Next()
+	// will encounter an internal EOF call and call rows.Close(). But if for some reason rows.Close() is not called and we exit the function, not defering rows.Close()
+	// can become a potential source of memory leak in that case. In case of an error however rows.Close() is called internally
+	return rows
+}
+
+func (q Query) executeReadAsync(db *sql.DB, rowChan chan *sql.Rows, wg sync.WaitGroup) {
+	defer wg.Done()
+	st := time.Now()
+	rows, err := db.Query(q.query)
+	et := time.Now()
+	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+	var cSignal cSignal
+	if err != nil {
+		glog.Info(err)
+		return
+	}
+	defer rows.Close()
+	rowChan <- rows
+}
+
+func (q Query) executeWrite(db *sql.DB) {
+	st := time.Now()
+	_, err := db.Exec(q.query)
+	et := time.Now()
+	if err != nil {
+		glog.Fatal(err)
+	}
+	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+}
+
+func (q Query) executeWriteAsync(db *sql.DB, wg sync.WaitGroup) {
+	defer wg.Done()
+	st := time.Now()
+	_, err := db.Exec(q.query)
+	et := time.Now()
+	var cSignal cSignal
+	if err != nil {
+		glog.Info(err)
+		return
+	}
+	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+}
+
+func writeRowsToDisk(rows *sql.Rows, f *os.File, wg sync.WaitGroup) {
+	defer wg.Done()
+	cols, err := rows.Columns()
+	// skipping the id field
+	idPos := 0
+	for i, col := range cols { // go does not have a straightforward way to get an element
+		if col == "id" {
+			idPos = i
+		}
+	}
+	cols = append(cols[:idPos], cols[idPos+1:]...)
+	/*
+		Now, when calling a function, ... does the opposite: it unpacks a slice and passes them as separate arguments to a variadic function.
+	*/
+	if err != nil {
+		glog.Info(err)
+		return
+	}
+
+	rawResult := make([][]byte, len(cols))
+
+	dest := make([]interface{}, len(cols))
+
+	for i, _ := range rawResult {
+		dest[i] = &rawResult[i]
+	}
+
+	for rows.Next() {
+		err = rows.Scan(dest...) // check out variadic functions in go
+		/*
+			Note to programmer: in python, variadic functions can be written at some level using *args and **kwargs. In go, variadic functions are typically written with `...`
+			Recall that Scan takes a slice of interfaces using `...`. Here we can pass that interface using `...` and as long as we have pointer
+		*/
+		if err != nil {
+			glog.Info(err)
+			return
+		}
+
+		for _, raw := range rawResult {
+			if raw == nil {
+				f.Write([]byte("NULL"))
+			} else {
+				f.Write(raw)
+			}
+		}
+	}
 }
 
 func getConnection(host string, user string, pwd string, db string, port int) *sql.DB {
