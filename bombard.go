@@ -197,35 +197,107 @@ func getConnection(host string, user string, pwd string, db string, port int) *s
 	return conn
 }
 
-func prepare(db *sql.DB, table string, pr float64) {
+// copy prepN amount of data and dump into a temporary table. copying is done in batches
+func chunkCopyDataTempTable(db *sql.DB, table string, prepN int, prepareChunkSize int, aok chan string) {
+	var cTempTableCopy QueryBatch
+	cTempTableCopy.size = prepN
+	cTempTableCopy.db = db
+	_, err := db.Exec("CREATE TABLE %s LIKE %s", table+"_c4", table)
+	if err != nil {
+		glog.Fatal(err)
+	}
+	var id int
+	err = db.QueryRow("SELECT id FROM %s ORDER BY ID DESC LIMIT 1", table).Scan(&id)
+	if err != nil {
+		glog.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	c := 0
+	var j int
+	for i := prepN; i > 0; i -= prepareChunkSize {
+		j = id - (c * prepareChunkSize)
+		c++
+		var query Query
+		query.query = fmt.Sprintf("INSERT INTO %s SELECT * FROM %s WHERE id <= %d ORDER BY id desc LIMIT %s", table+"_c4", table, j, prepareChunkSize)
+		cTempTableCopy.q = append(cTempTableCopy.q, query)
+		wg.Add(1)
+		go query.executeWriteAsync(db, wg)
+	}
+	wg.Wait() // waiting for all go routines to finish
+	var cSignal cSignal
+	aok <- cSignal.aok()
+}
+
+func chunkCopyDataDisk(db *sql.DB, table string, prepN int, prepareChunkSize int, aok chan string) {
+	var cDiskCopy QueryBatch
+	cDiskCopy.size = prepN
+	cDiskCopy.db = db
+	var id int
+	err := db.QueryRow("SELECT id FROM %s ORDER BY ID DESC LIMIT %s,1", table, prepN).Scan(&id)
+	if err != nil {
+		glog.Fatal(err)
+	}
+	var rowData chan *sql.Rows
+	var wg sync.WaitGroup
+	c := 0
+	var j int
+	for i := prepN; i > 0; i -= prepareChunkSize {
+		j = id + (c * prepareChunkSize)
+		c++
+		var query Query
+		query.query = fmt.Sprintf("SELECT * FROM %s WHERE id >= %d ORDER BY id asc LIMIT %d", table+"_c4", table, j, prepareChunkSize)
+		cDiskCopy.q = append(cDiskCopy.q, query)
+		wg.Add(1)
+		go query.executeReadAsync(db, rowData, wg)
+	}
+	wg.Wait() // waiting for all go routines to finish
+
+	/*
+		TODO:Execute each of the write to disk operations however
+	*/
+
+	var cSignal cSignal
+	aok <- cSignal.aok()
+}
+
+func prepare(db *sql.DB, table string, pr float64, prepareChunkSize int) {
 	/*
 		prepare creates a new temporary table using the same schema as the specified table and copies `pr` amount of data to it
 	*/
 	var count int
-	row := db.QueryRow("SELECT COUNT(1) FROM %s", table)
-	err := row.Scan(&count)
+	err := db.QueryRow("SELECT COUNT(1) FROM %s", table).Scan(&count)
 	if err != nil {
 		glog.Fatal(err)
 	}
-	prepN := math.Round(pr * float64(count))
-	//prepN is now the number of rows to be copied to the temporary table and copied to disk
-
+	prepN := int(math.Round(pr * float64(count)))
+	//prepN is now the number of rows to be copied(from the end) to the temporary table and copied to disk
+	var aok chan string
+	go chunkCopyDataDisk(db, table, prepN, prepareChunkSize, aok)
+	go chunkCopyDataTempTable(db, table, prepN, prepareChunkSize, aok)
 }
 
 func main() {
 
+	prepPhaseChunkSize, _ := strconv.ParseInt(os.Getenv("PREP_PHASE_CHUNK_SIZE"), 10, 0)
 	tempTablePrepSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_PREP_SIZE_RATIO"), 32) // the ratio of the temp table size to the actual table size, this amount of data is copied
 	// to the temporary table from the new table
+
 	if tempTablePrepSizeRatio == 0.00 {
 		defVal := 0.66
 		glog.Warning("TEMP_TABLE_PREP_SIZE_RATIO has not been set, defaulting to %0.2f", defVal)
 		tempTablePrepSizeRatio = defVal
+	}
+	if prepPhaseChunkSize == 0 {
+		defVal := 10000
+		glog.Warning("PREP_PHASE_CHUNK_SIZE has not been set, defaultinig to %d", defVal)
+		prepPhaseChunkSize = int64(defVal)
 	}
 	host := flag.String("host", "localhost", "hostname of the database")
 	user := flag.String("username", "root", "username")
 	pwd := flag.String("password", "toor", "password")
 	port := flag.Int("port", 3306, "port")
 	db := flag.String("database", "ilapahsi", "database to execute on")
+	askPass := flag.Bool("ask-pass", false, "Ask Pass")
 	table := flag.String("tablename", "ilapahsi", "tablename")
 	prep := flag.Bool("prepare", false, "if prepare")
 	run := flag.Bool("run", false, "if run")
@@ -233,9 +305,18 @@ func main() {
 	dry := flag.Bool("dry", false, "dry run")
 	cpm := flag.Int("cpm", 10, "calls per minute on the table")
 
+	flag.Parse()
+
+	if *askPass {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Println("Db password: ")
+		text, _ := reader.ReadString('\n')
+		fmt.Println(text)
+	}
+
 	if *prep {
 		conn := getConnection(*host, *user, *pwd, *db, *port)
 		glog.Info("Starting prepare phase for table: %s", *table)
-		prepare(conn, *table, tempTablePrepSizeRatio)
+		prepare(conn, *table, tempTablePrepSizeRatio, int(prepPhaseChunkSize))
 	}
 }
