@@ -139,7 +139,8 @@ func writeRowsToDisk(rows *sql.Rows, f *os.File, wg sync.WaitGroup) {
 	}
 
 	rawResult := make([][]byte, len(cols))
-
+	// Loading everything into memory is not an ideal way of going about this
+	// TODO: change this
 	dest := make([]interface{}, len(cols))
 
 	for i, _ := range rawResult {
@@ -230,10 +231,14 @@ func chunkCopyDataDisk(db *sql.DB, table string, prepN int, prepareChunkSize int
 		go query.executeReadAsync(db, rowData, wg)
 	}
 	wg.Wait() // waiting for all go routines to finish
-
-	/*
-		TODO:Execute each of the write to disk operations however
-	*/
+	for {     // since wait is already done, here we get all rows using nonblocking channel reception
+		select {
+		case rows := <-rowData:
+			// TODO
+		default:
+			break
+		}
+	}
 }
 
 func prepare(db *sql.DB, table string, pr float64, prepareChunkSize int) {
