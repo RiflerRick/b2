@@ -108,7 +108,6 @@ func (q Query) executeReadAsync(db *sql.DB, rowChan chan *sql.Rows, wg sync.Wait
 	rows, err := db.Query(q.query)
 	et := time.Now()
 	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
-	var cSignal cSignal
 	if err != nil {
 		glog.Info(err)
 		return
@@ -132,7 +131,6 @@ func (q Query) executeWriteAsync(db *sql.DB, wg sync.WaitGroup) {
 	st := time.Now()
 	_, err := db.Exec(q.query)
 	et := time.Now()
-	var cSignal cSignal
 	if err != nil {
 		glog.Info(err)
 		return
@@ -198,7 +196,8 @@ func getConnection(host string, user string, pwd string, db string, port int) *s
 }
 
 // copy prepN amount of data and dump into a temporary table. copying is done in batches
-func chunkCopyDataTempTable(db *sql.DB, table string, prepN int, prepareChunkSize int, aok chan string) {
+func chunkCopyDataTempTable(db *sql.DB, table string, prepN int, prepareChunkSize int, w sync.WaitGroup) {
+	defer w.Done()
 	var cTempTableCopy QueryBatch
 	cTempTableCopy.size = prepN
 	cTempTableCopy.db = db
@@ -224,11 +223,10 @@ func chunkCopyDataTempTable(db *sql.DB, table string, prepN int, prepareChunkSiz
 		go query.executeWriteAsync(db, wg)
 	}
 	wg.Wait() // waiting for all go routines to finish
-	var cSignal cSignal
-	aok <- cSignal.aok()
 }
 
-func chunkCopyDataDisk(db *sql.DB, table string, prepN int, prepareChunkSize int, aok chan string) {
+func chunkCopyDataDisk(db *sql.DB, table string, prepN int, prepareChunkSize int, w sync.WaitGroup) {
+	defer w.Done()
 	var cDiskCopy QueryBatch
 	cDiskCopy.size = prepN
 	cDiskCopy.db = db
@@ -255,9 +253,6 @@ func chunkCopyDataDisk(db *sql.DB, table string, prepN int, prepareChunkSize int
 	/*
 		TODO:Execute each of the write to disk operations however
 	*/
-
-	var cSignal cSignal
-	aok <- cSignal.aok()
 }
 
 func prepare(db *sql.DB, table string, pr float64, prepareChunkSize int) {
@@ -271,9 +266,11 @@ func prepare(db *sql.DB, table string, pr float64, prepareChunkSize int) {
 	}
 	prepN := int(math.Round(pr * float64(count)))
 	//prepN is now the number of rows to be copied(from the end) to the temporary table and copied to disk
-	var aok chan string
-	go chunkCopyDataDisk(db, table, prepN, prepareChunkSize, aok)
-	go chunkCopyDataTempTable(db, table, prepN, prepareChunkSize, aok)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go chunkCopyDataDisk(db, table, prepN, prepareChunkSize, wg)
+	go chunkCopyDataTempTable(db, table, prepN, prepareChunkSize, wg)
+	wg.Wait()
 }
 
 func main() {
