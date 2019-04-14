@@ -23,15 +23,37 @@ run: --run for run stage
 package main
 
 import (
+	"bufio"
 	"database/sql"
 	"flag"
 	"fmt"
 	"math"
 	"os"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/golang/glog"
 )
+
+// signals for channels
+type cSignal struct {
+	FATAL string
+	AOK   string
+	WARN  string
+}
+
+func (c cSignal) fatal() string {
+	return "FATAL"
+}
+
+func (c cSignal) aok() string {
+	return "AOK"
+}
+
+func (c cSignal) warn() string {
+	return "WARNING"
+}
 
 /*
 database errors
@@ -51,7 +73,6 @@ Query defines the query itself, along with wait_time in milliseconds and error i
 type Query struct {
 	query string
 	wt    int
-	e     dbError
 }
 
 /*
