@@ -36,25 +36,6 @@ import (
 	"github.com/golang/glog"
 )
 
-// signals for channels
-type cSignal struct {
-	FATAL string
-	AOK   string
-	WARN  string
-}
-
-func (c cSignal) fatal() string {
-	return "FATAL"
-}
-
-func (c cSignal) aok() string {
-	return "AOK"
-}
-
-func (c cSignal) warn() string {
-	return "WARNING"
-}
-
 /*
 database errors
 */
