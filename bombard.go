@@ -2,7 +2,7 @@
 Author:
 Works with MySQL only
 script for bombarding specific tables of the database
-prepare phase: Consists 2 phases: the first phase copies data from a specified table from the db and stores it in a binary file in the disk. The second phase copies data from the specified table and creates a temporary table out of it. These 2 phases happen parallely
+prepare phase: This phase copies data from the specified table and creates a temporary table out of it.
 run phase: the run phase bombards the temporary table with the data
 
 The TEMP_TABLE_PREP_SIZE_RATIO environment variable dictates the percentage rows of the original table are going to be copied to the new temporary table
@@ -11,6 +11,8 @@ The TEMP_TABLE_PREP_SIZE_RATIO environment variable dictates the percentage rows
 /*
 options:
 host: db host
+expHost: experiment db host. The host db to bombard, this is useful in case of minimizing impact
+on the db having the original table
 user: username
 password*: password if to be given on the command line
 ask-pass: ask for the password at runtime
@@ -119,17 +121,9 @@ func (q Query) executeWriteAsync(db *sql.DB, wg sync.WaitGroup) {
 	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
 }
 
-func writeRowsToDisk(rows *sql.Rows, f *os.File, wg sync.WaitGroup) {
+func writeRowsToTempTable(expDb *sql.DB, tempTableName string, rows *sql.Rows, wg sync.WaitGroup) {
 	defer wg.Done()
 	cols, err := rows.Columns()
-	// skipping the id field
-	idPos := 0
-	for i, col := range cols { // go does not have a straightforward way to get an element
-		if col == "id" {
-			idPos = i
-		}
-	}
-	cols = append(cols[:idPos], cols[idPos+1:]...)
 	/*
 		Now, when calling a function, ... does the opposite: it unpacks a slice and passes them as separate arguments to a variadic function.
 	*/
@@ -137,34 +131,37 @@ func writeRowsToDisk(rows *sql.Rows, f *os.File, wg sync.WaitGroup) {
 		glog.Info(err)
 		return
 	}
-
-	rawResult := make([][]byte, len(cols))
-	// Loading everything into memory is not an ideal way of going about this
-	// TODO: change this
+	// rawResult := make([][]byte, len(cols))
 	dest := make([]interface{}, len(cols))
 
-	for i, _ := range rawResult {
-		dest[i] = &rawResult[i]
+	// point all interface
+	// for i := range rawResult {
+	// 	dest[i] = &rawResult[i]
+	// }
+	var query Query
+	baseQuery := fmt.Sprintf("INSERT INTO %s VALUES ", tempTableName)
+	for i := range cols {
+		if i == 0 {
+			baseQuery += "("
+		} else if i == (len(cols) - 1) {
+			baseQuery += "%s"
+			baseQuery += ")"
+			break
+		}
+		baseQuery += "%s,"
 	}
-
 	for rows.Next() {
 		err = rows.Scan(dest...) // check out variadic functions in go
 		/*
 			Note to programmer: in python, variadic functions can be written at some level using *args and **kwargs. In go, variadic functions are typically written with `...`
-			Recall that Scan takes a slice of interfaces using `...`. Here we can pass that interface using `...` and as long as we have pointer
+			Recall that Scan takes a slice of interfaces using `...`. Here we can pass that interface using `...`
 		*/
 		if err != nil {
 			glog.Info(err)
 			return
 		}
-
-		for _, raw := range rawResult {
-			if raw == nil {
-				f.Write([]byte("NULL"))
-			} else {
-				f.Write(raw)
-			}
-		}
+		query.query = fmt.Sprintf(baseQuery, dest...)
+		query.executeWrite(expDb)
 	}
 }
 
@@ -178,12 +175,13 @@ func getConnection(host string, user string, pwd string, db string, port int) *s
 }
 
 // copy prepN amount of data and dump into a temporary table. copying is done in batches
-func chunkCopyDataTempTable(db *sql.DB, table string, prepN int, prepareChunkSize int, w sync.WaitGroup) {
+func chunkCopyDataTempTable(db *sql.DB, expDb *sql.DB, table string, prepN int, prepareChunkSize int, w sync.WaitGroup) {
 	defer w.Done()
 	var cTempTableCopy QueryBatch
 	cTempTableCopy.size = prepN
-	cTempTableCopy.db = db
-	_, err := db.Exec("CREATE TABLE %s LIKE %s", table+"_c4", table)
+	cTempTableCopy.db = expDb
+	tempTableName := table + "_c4"
+	_, err := expDb.Exec("CREATE TABLE %s LIKE %s", tempTableName, table)
 	if err != nil {
 		glog.Fatal(err)
 	}
@@ -195,38 +193,13 @@ func chunkCopyDataTempTable(db *sql.DB, table string, prepN int, prepareChunkSiz
 	var wg sync.WaitGroup
 	c := 0
 	var j int
+	var rowData chan *sql.Rows
 	for i := prepN; i > 0; i -= prepareChunkSize {
 		j = id - (c * prepareChunkSize)
 		c++
 		var query Query
-		query.query = fmt.Sprintf("INSERT INTO %s SELECT * FROM %s WHERE id <= %d ORDER BY id desc LIMIT %s", table+"_c4", table, j, prepareChunkSize)
+		query.query = fmt.Sprintf("SELECT * FROM %s WHERE id <= %d ORDER BY id desc LIMIT %s", table, j, prepareChunkSize)
 		cTempTableCopy.q = append(cTempTableCopy.q, query)
-		wg.Add(1)
-		go query.executeWriteAsync(db, wg)
-	}
-	wg.Wait() // waiting for all go routines to finish
-}
-
-func chunkCopyDataDisk(db *sql.DB, table string, prepN int, prepareChunkSize int, w sync.WaitGroup) {
-	defer w.Done()
-	var cDiskCopy QueryBatch
-	cDiskCopy.size = prepN
-	cDiskCopy.db = db
-	var id int
-	err := db.QueryRow("SELECT id FROM %s ORDER BY ID DESC LIMIT %s,1", table, prepN).Scan(&id)
-	if err != nil {
-		glog.Fatal(err)
-	}
-	var rowData chan *sql.Rows
-	var wg sync.WaitGroup
-	c := 0
-	var j int
-	for i := prepN; i > 0; i -= prepareChunkSize {
-		j = id + (c * prepareChunkSize)
-		c++
-		var query Query
-		query.query = fmt.Sprintf("SELECT * FROM %s WHERE id >= %d ORDER BY id asc LIMIT %d", table+"_c4", table, j, prepareChunkSize)
-		cDiskCopy.q = append(cDiskCopy.q, query)
 		wg.Add(1)
 		go query.executeReadAsync(db, rowData, wg)
 	}
@@ -234,14 +207,16 @@ func chunkCopyDataDisk(db *sql.DB, table string, prepN int, prepareChunkSize int
 	for {     // since wait is already done, here we get all rows using nonblocking channel reception
 		select {
 		case rows := <-rowData:
-			// TODO
+			wg.Add(1)
+			go writeRowsToTempTable(expDb, tempTableName, rows, wg)
 		default:
 			break
 		}
 	}
+	wg.Wait() // waiting for all writes to finish
 }
 
-func prepare(db *sql.DB, table string, pr float64, prepareChunkSize int) {
+func prepare(db *sql.DB, expDb *sql.DB, table string, pr float64, prepareChunkSize int) {
 	/*
 		prepare creates a new temporary table using the same schema as the specified table and copies `pr` amount of data to it
 	*/
@@ -253,9 +228,8 @@ func prepare(db *sql.DB, table string, pr float64, prepareChunkSize int) {
 	prepN := int(math.Round(pr * float64(count)))
 	//prepN is now the number of rows to be copied(from the end) to the temporary table and copied to disk
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go chunkCopyDataDisk(db, table, prepN, prepareChunkSize, wg)
-	go chunkCopyDataTempTable(db, table, prepN, prepareChunkSize, wg)
+	wg.Add(1)
+	go chunkCopyDataTempTable(db, expDb, table, prepN, prepareChunkSize, wg)
 	wg.Wait()
 }
 
@@ -276,6 +250,7 @@ func main() {
 		prepPhaseChunkSize = int64(defVal)
 	}
 	host := flag.String("host", "localhost", "hostname of the database")
+	expHost := flag.String("experiment-host", "localhost", "In case the benchmarking is being done in a separate host from where the actual table is present in, use this flag")
 	user := flag.String("username", "root", "username")
 	pwd := flag.String("password", "toor", "password")
 	port := flag.Int("port", 3306, "port")
@@ -299,7 +274,8 @@ func main() {
 
 	if *prep {
 		conn := getConnection(*host, *user, *pwd, *db, *port)
+		expConn := getConnection(*expHost, *user, *pwd, *db, *port)
 		glog.Info("Starting prepare phase for table: %s", *table)
-		prepare(conn, *table, tempTablePrepSizeRatio, int(prepPhaseChunkSize))
+		prepare(conn, expConn, *table, tempTablePrepSizeRatio, int(prepPhaseChunkSize))
 	}
 }
