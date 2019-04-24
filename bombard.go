@@ -5,7 +5,8 @@ script for bombarding specific tables of the database
 prepare phase: This phase copies data from the specified table and creates a temporary table out of it.
 run phase: the run phase bombards the temporary table with the data
 
-The TEMP_TABLE_PREP_SIZE_RATIO environment variable dictates the percentage rows of the original table are going to be copied to the new temporary table
+The TEMP_TABLE_SIZE_RATIO environment variable dictates the percentage rows of the original table are going to be copied to the new temporary table. These are the rows that are going to be used for bombarding.
+In a way this is considered to be the recent data being used
 */
 
 /*
@@ -198,7 +199,7 @@ func chunkCopyDataTempTable(db *sql.DB, expDb *sql.DB, table string, prepN int, 
 		j = id - (c * prepareChunkSize)
 		c++
 		var query Query
-		query.query = fmt.Sprintf("SELECT * FROM %s WHERE id <= %d ORDER BY id desc LIMIT %s", table, j, prepareChunkSize)
+		query.query = fmt.Sprintf("SELECT * FROM %s WHERE id <= %d ORDER BY id desc LIMIT %d", table, j, prepareChunkSize)
 		cTempTableCopy.q = append(cTempTableCopy.q, query)
 		wg.Add(1)
 		go query.executeReadAsync(db, rowData, wg)
@@ -236,17 +237,17 @@ func prepare(db *sql.DB, expDb *sql.DB, table string, pr float64, prepareChunkSi
 func main() {
 
 	prepPhaseChunkSize, _ := strconv.ParseInt(os.Getenv("PREP_PHASE_CHUNK_SIZE"), 10, 0)
-	tempTablePrepSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_PREP_SIZE_RATIO"), 32) // the ratio of the temp table size to the actual table size, this amount of data is copied
+	tempTablePrepSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_SIZE_RATIO"), 32) // the ratio of the temp table size to the actual table size, this amount of data is copied
 	// to the temporary table from the new table
 
 	if tempTablePrepSizeRatio == 0.00 {
 		defVal := 0.66
-		glog.Warning("TEMP_TABLE_PREP_SIZE_RATIO has not been set, defaulting to %0.2f", defVal)
+		glog.Warning(fmt.Sprintf("TEMP_TABLE_SIZE_RATIO has not been set, defaulting to %0.2f", defVal))
 		tempTablePrepSizeRatio = defVal
 	}
 	if prepPhaseChunkSize == 0 {
 		defVal := 10000
-		glog.Warning("PREP_PHASE_CHUNK_SIZE has not been set, defaultinig to %d", defVal)
+		glog.Warning(fmt.Sprintf("PREP_PHASE_CHUNK_SIZE has not been set, defaultinig to %d", defVal))
 		prepPhaseChunkSize = int64(defVal)
 	}
 	host := flag.String("host", "localhost", "hostname of the database")
@@ -259,9 +260,9 @@ func main() {
 	table := flag.String("tablename", "ilapahsi", "tablename")
 	prep := flag.Bool("prepare", false, "if prepare")
 	run := flag.Bool("run", false, "if run")
-	verbose := flag.Bool("verbose", false, "verbose logging")
-	dry := flag.Bool("dry", false, "dry run")
-	cpm := flag.Int("cpm", 10, "calls per minute on the table")
+	// verbose := flag.Bool("verbose", false, "verbose logging")
+	// dry := flag.Bool("dry", false, "dry run")
+	// cpm := flag.Int("cpm", 10, "calls per minute on the table")
 
 	flag.Parse()
 
@@ -269,13 +270,18 @@ func main() {
 		reader := bufio.NewReader(os.Stdin)
 		fmt.Println("Db password: ")
 		text, _ := reader.ReadString('\n')
-		fmt.Println(text)
+		pwd = &text
 	}
-
 	if *prep {
+		glog.Info("Running 'prep' phase!!!")
 		conn := getConnection(*host, *user, *pwd, *db, *port)
 		expConn := getConnection(*expHost, *user, *pwd, *db, *port)
-		glog.Info("Starting prepare phase for table: %s", *table)
+		glog.Info(fmt.Sprintf("Starting prepare phase for table: %s", *table))
 		prepare(conn, expConn, *table, tempTablePrepSizeRatio, int(prepPhaseChunkSize))
+	} else if *run {
+		glog.Info("Running 'run' phase!!!")
+		// TODO
+	} else {
+		glog.Info("Neither prep nor run passed. Aborting!!!")
 	}
 }
