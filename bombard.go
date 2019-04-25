@@ -7,6 +7,8 @@ run phase: the run phase bombards the temporary table with the data
 
 The TEMP_TABLE_SIZE_RATIO environment variable dictates the percentage rows of the original table are going to be copied to the new temporary table. These are the rows that are going to be used for bombarding.
 In a way this is considered to be the recent data being used
+
+-stderrthreshold=INFO is required
 */
 
 /*
@@ -36,6 +38,7 @@ import (
 	"sync"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang/glog"
 )
 
@@ -186,23 +189,36 @@ func chunkCopyDataTempTable(db *sql.DB, expDb *sql.DB, table string, prepN int, 
 	if err != nil {
 		glog.Fatal(err)
 	}
-	var id int
-	err = db.QueryRow("SELECT id FROM %s ORDER BY ID DESC LIMIT 1", table).Scan(&id)
+	glog.V(0).Infof("Table %s has been created", tempTableName)
+	var startID int
+	var endID int
+	err = db.QueryRow("SELECT id FROM %s ORDER BY ID ASC LIMIT 1, %d", table, prepN).Scan(&startID)
+	if err != nil {
+		glog.Fatal(err)
+	}
+	err = db.QueryRow("SELECT id FROM %s ORDER BY ID DESC LIMIT 1", table).Scan(&endID)
 	if err != nil {
 		glog.Fatal(err)
 	}
 	var wg sync.WaitGroup
-	c := 0
-	var j int
 	var rowData chan *sql.Rows
-	for i := prepN; i > 0; i -= prepareChunkSize {
-		j = id - (c * prepareChunkSize)
-		c++
-		var query Query
-		query.query = fmt.Sprintf("SELECT * FROM %s WHERE id <= %d ORDER BY id desc LIMIT %d", table, j, prepareChunkSize)
-		cTempTableCopy.q = append(cTempTableCopy.q, query)
+	j := startID
+	breakLoop := false
+	for {
+		if j == endID {
+			breakLoop = true
+		}
+		var selQuery Query
+		var getIDQuery Query
+		selQuery.query = fmt.Sprintf("SELECT * FROM %s WHERE id >= %d ORDER BY id asc LIMIT %d", table, j, prepareChunkSize)
+		getIDQuery.query = fmt.Sprintf("SELECT id FROM %s WHERE id > %d ORDER BY id asc LIMIT 1 OFFSET %d", table, j, prepareChunkSize)
+		getIDQuery.executeRead(db).Scan(&j)
+		cTempTableCopy.q = append(cTempTableCopy.q, selQuery)
 		wg.Add(1)
-		go query.executeReadAsync(db, rowData, wg)
+		go selQuery.executeReadAsync(db, rowData, wg)
+		if breakLoop {
+			break
+		}
 	}
 	wg.Wait() // waiting for all go routines to finish
 	for {     // since wait is already done, here we get all rows using nonblocking channel reception
@@ -227,6 +243,8 @@ func prepare(db *sql.DB, expDb *sql.DB, table string, pr float64, prepareChunkSi
 		glog.Fatal(err)
 	}
 	prepN := int(math.Round(pr * float64(count)))
+	glog.V(2).Infof("prepN has been set as %d", prepN)
+	glog.V(2).Infof("number of rows in the table %s: %d", table, count)
 	//prepN is now the number of rows to be copied(from the end) to the temporary table and copied to disk
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -242,12 +260,12 @@ func main() {
 
 	if tempTablePrepSizeRatio == 0.00 {
 		defVal := 0.66
-		glog.Warning(fmt.Sprintf("TEMP_TABLE_SIZE_RATIO has not been set, defaulting to %0.2f", defVal))
+		glog.V(0).Infof("TEMP_TABLE_SIZE_RATIO has not been set, defaulting to %0.2f", defVal)
 		tempTablePrepSizeRatio = defVal
 	}
 	if prepPhaseChunkSize == 0 {
 		defVal := 10000
-		glog.Warning(fmt.Sprintf("PREP_PHASE_CHUNK_SIZE has not been set, defaultinig to %d", defVal))
+		glog.V(0).Infof("PREP_PHASE_CHUNK_SIZE has not been set, defaulting to %d", defVal)
 		prepPhaseChunkSize = int64(defVal)
 	}
 	host := flag.String("host", "localhost", "hostname of the database")
@@ -263,25 +281,25 @@ func main() {
 	// verbose := flag.Bool("verbose", false, "verbose logging")
 	// dry := flag.Bool("dry", false, "dry run")
 	// cpm := flag.Int("cpm", 10, "calls per minute on the table")
-
 	flag.Parse()
 
 	if *askPass {
+		// TODO: check how we can effectively ask for the password without displaying
 		reader := bufio.NewReader(os.Stdin)
 		fmt.Println("Db password: ")
 		text, _ := reader.ReadString('\n')
 		pwd = &text
 	}
 	if *prep {
-		glog.Info("Running 'prep' phase!!!")
+		glog.V(0).Info("Running 'prep' phase!!!")
 		conn := getConnection(*host, *user, *pwd, *db, *port)
 		expConn := getConnection(*expHost, *user, *pwd, *db, *port)
-		glog.Info(fmt.Sprintf("Starting prepare phase for table: %s", *table))
+		glog.V(0).Infof("Starting prepare phase for table: %s", *table)
 		prepare(conn, expConn, *table, tempTablePrepSizeRatio, int(prepPhaseChunkSize))
 	} else if *run {
-		glog.Info("Running 'run' phase!!!")
+		glog.V(0).Info("Running 'run' phase!!!")
 		// TODO
 	} else {
-		glog.Info("Neither prep nor run passed. Aborting!!!")
+		glog.V(0).Info("Neither prep nor run passed. Aborting!!!")
 	}
 }
