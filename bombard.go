@@ -9,6 +9,7 @@ The TEMP_TABLE_SIZE_RATIO environment variable dictates the percentage rows of t
 In a way this is considered to be the recent data being used
 
 -stderrthreshold=INFO is required
+-v=2 for 2 level verbosity
 */
 
 /*
@@ -35,6 +36,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,6 +65,14 @@ type Query struct {
 }
 
 /*
+Transactions for db transactions
+*/
+type Transaction struct {
+	transaction *sql.Tx
+	wt          int
+}
+
+/*
 QueryBatch defines the batch of queries to be executed
 q is the query defined, sleep is the sleep time between queries in milliseconds, size is the number of queries in the batch
 */
@@ -81,7 +91,6 @@ func (q Query) executeRead(db *sql.DB) *sql.Rows {
 	if err != nil {
 		glog.Fatal(err)
 	}
-	defer rows.Close()
 	// as long as there is an open result set(represented by rows), the underlying connection is busy and can't be used for any other query
 	// That means it is not available in the connection pool. If you iterate over all the rows with rows.Next(), eventually you'll read the last row and rows.Next()
 	// will encounter an internal EOF call and call rows.Close(). But if for some reason rows.Close() is not called and we exit the function, not defering rows.Close()
@@ -89,8 +98,15 @@ func (q Query) executeRead(db *sql.DB) *sql.Rows {
 	return rows
 }
 
-func (q Query) executeReadAsync(db *sql.DB, rowChan chan *sql.Rows, wg sync.WaitGroup) {
-	defer wg.Done()
+func (q Query) executeReadRow(db *sql.DB) *sql.Row {
+	st := time.Now()
+	row := db.QueryRow(q.query)
+	et := time.Now()
+	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+	return row
+}
+
+func (q Query) executeReadAsync(db *sql.DB, rowChan chan *sql.Rows) {
 	st := time.Now()
 	rows, err := db.Query(q.query)
 	et := time.Now()
@@ -99,8 +115,15 @@ func (q Query) executeReadAsync(db *sql.DB, rowChan chan *sql.Rows, wg sync.Wait
 		glog.Info(err)
 		return
 	}
-	defer rows.Close()
 	rowChan <- rows
+}
+
+func (q Query) executeReadRowAsync(db *sql.DB, rowChan chan *sql.Row) {
+	st := time.Now()
+	row := db.QueryRow(q.query)
+	et := time.Now()
+	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+	rowChan <- row
 }
 
 func (q Query) executeWrite(db *sql.DB) {
@@ -113,8 +136,24 @@ func (q Query) executeWrite(db *sql.DB) {
 	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
 }
 
-func (q Query) executeWriteAsync(db *sql.DB, wg sync.WaitGroup) {
-	defer wg.Done()
+func (t Transaction) commit() {
+	st := time.Now()
+	err := t.transaction.Commit()
+	if err != nil {
+		glog.Fatal(err)
+	}
+	et := time.Now()
+	t.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+}
+
+func (t Transaction) executeVariadic(query string, data ...interface{}) {
+	_, err := t.transaction.Exec(query, data...)
+	if err != nil {
+		glog.Fatal(err)
+	}
+}
+
+func (q Query) executeWriteAsync(db *sql.DB) {
 	st := time.Now()
 	_, err := db.Exec(q.query)
 	et := time.Now()
@@ -125,8 +164,9 @@ func (q Query) executeWriteAsync(db *sql.DB, wg sync.WaitGroup) {
 	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
 }
 
-func writeRowsToTempTable(expDb *sql.DB, tempTableName string, rows *sql.Rows, wg sync.WaitGroup) {
+func writeRowsToTempTable(expDb *sql.DB, tempTableName string, rows *sql.Rows, wg *sync.WaitGroup, insertCommitsAfter int) {
 	defer wg.Done()
+	defer rows.Close()
 	cols, err := rows.Columns()
 	/*
 		Now, when calling a function, ... does the opposite: it unpacks a slice and passes them as separate arguments to a variadic function.
@@ -135,28 +175,32 @@ func writeRowsToTempTable(expDb *sql.DB, tempTableName string, rows *sql.Rows, w
 		glog.Info(err)
 		return
 	}
-	// rawResult := make([][]byte, len(cols))
-	dest := make([]interface{}, len(cols))
 
-	// point all interface
-	// for i := range rawResult {
-	// 	dest[i] = &rawResult[i]
-	// }
-	var query Query
-	baseQuery := fmt.Sprintf("INSERT INTO %s VALUES ", tempTableName)
-	for i := range cols {
-		if i == 0 {
-			baseQuery += "("
-		} else if i == (len(cols) - 1) {
-			baseQuery += "%s"
-			baseQuery += ")"
-			break
-		}
-		baseQuery += "%s,"
-	}
-	glog.V(2).Infof("Insert query: %s", baseQuery)
+	colData := make([]interface{}, 0)
+	var tx Transaction
+	startTrx := true
+	var baseQuery string
+	rowsFetched := 0
+
 	for rows.Next() {
-		err = rows.Scan(dest...) // check out variadic functions in go
+		if startTrx {
+			colData = make([]interface{}, 0)
+			startTrx = false
+			tx.transaction, err = expDb.Begin()
+			if err != nil {
+				glog.Fatal(err)
+			}
+			baseQuery = fmt.Sprintf("INSERT INTO %s VALUES ", tempTableName)
+		}
+
+		columns := make([]interface{}, len(cols))
+		columnPointers := make([]interface{}, len(cols))
+		for i := range columns {
+			columnPointers[i] = &columns[i]
+		}
+
+		err = rows.Scan(columnPointers...) // check out variadic functions in go
+		rowsFetched++
 		/*
 			Note to programmer: in python, variadic functions can be written at some level using *args and **kwargs. In go, variadic functions are typically written with `...`
 			Recall that Scan takes a slice of interfaces using `...`. Here we can pass that interface using `...`
@@ -165,14 +209,42 @@ func writeRowsToTempTable(expDb *sql.DB, tempTableName string, rows *sql.Rows, w
 			glog.Info(err)
 			return
 		}
-		query.query = fmt.Sprintf(baseQuery, dest...)
-		query.executeWrite(expDb)
+		for i := range cols {
+			val := columnPointers[i].(*interface{})
+			// if *val == nil {
+			// 	colData = append(colData, "NULL")
+			// 	continue
+			// }
+			colData = append(colData, *val)
+		}
+
+		for i := range cols {
+			if i == 0 {
+				baseQuery += "("
+			} else if i == (len(cols) - 1) {
+				baseQuery += "?"
+				baseQuery += "),"
+				break
+			}
+			baseQuery += "?,"
+		}
+		if rowsFetched%insertCommitsAfter == 0 {
+			baseQuery = strings.TrimSuffix(baseQuery, ",")
+			tx.executeVariadic(baseQuery, colData...)
+			tx.commit()
+			startTrx = true
+		}
+	}
+	if rowsFetched%insertCommitsAfter != 0 {
+		baseQuery = strings.TrimSuffix(baseQuery, ",")
+		tx.executeVariadic(baseQuery, colData...) // to handle the last bit
+		tx.commit()
 	}
 }
 
 func getConnection(host string, user string, pwd string, db string, port int) *sql.DB {
 	// ping the database to see if it can connect
-	conn, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", user, pwd, host, port, db))
+	conn, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", user, pwd, host, port, db))
 	if err != nil {
 		glog.Fatal(err) // err is actually an interface
 	}
@@ -180,89 +252,109 @@ func getConnection(host string, user string, pwd string, db string, port int) *s
 }
 
 // copy prepN amount of data and dump into a temporary table. copying is done in batches
-func chunkCopyDataTempTable(db *sql.DB, expDb *sql.DB, table string, prepN int, prepareChunkSize int, w sync.WaitGroup) {
-	defer w.Done()
-	var cTempTableCopy QueryBatch
-	cTempTableCopy.size = prepN
-	cTempTableCopy.db = expDb
+func chunkCopyDataTempTable(db *sql.DB, expDb *sql.DB, table string, prepN int, prepareChunkSize int, insertCommitsAfter int) {
 	tempTableName := table + "_c4"
-	_, err := expDb.Exec("CREATE TABLE %s LIKE %s", tempTableName, table)
+	_, err := expDb.Exec(fmt.Sprintf("CREATE TABLE %s LIKE %s", tempTableName, table))
 	if err != nil {
 		glog.Fatal(err)
 	}
 	glog.V(0).Infof("Table %s has been created", tempTableName)
 	var startID int
 	var endID int
-	err = db.QueryRow("SELECT id FROM %s ORDER BY ID ASC LIMIT 1, %d", table, prepN).Scan(&startID)
+	err = db.QueryRow(fmt.Sprintf("SELECT id FROM %s ORDER BY ID DESC LIMIT 1 OFFSET %d", table, prepN)).Scan(&startID)
 	if err != nil {
 		glog.Fatal(err)
 	}
-	err = db.QueryRow("SELECT id FROM %s ORDER BY ID DESC LIMIT 1", table).Scan(&endID)
+	err = db.QueryRow(fmt.Sprintf("SELECT id FROM %s ORDER BY ID DESC LIMIT 1", table)).Scan(&endID)
 	if err != nil {
 		glog.Fatal(err)
 	}
-	var wg sync.WaitGroup
-	var rowData chan *sql.Rows
+	var r *sql.Row
+
+	var chanSize int
+	if prepN%prepareChunkSize != 0 {
+		chanSize = prepN/prepareChunkSize + 1
+	} else {
+		chanSize = prepN / prepareChunkSize
+	}
+
+	rowData := make(chan *sql.Rows, chanSize) //buffered channels is one way of combining waitgroups and channels
+
 	j := startID
 	breakLoop := false
+	numSelected := 0
+	goRoutinesSpun := 0
 	for {
 		glog.V(2).Infof("Selecting rows from %s starting with id: %d", table, j)
-		if j == endID {
-			glog.V(2).Infof("breakLoop condition matched")
-			breakLoop = true
-		}
 		var selQuery Query
 		var getIDQuery Query
 		selQuery.query = fmt.Sprintf("SELECT * FROM %s WHERE id >= %d ORDER BY id asc LIMIT %d", table, j, prepareChunkSize)
-		cTempTableCopy.q = append(cTempTableCopy.q, selQuery)
+		glog.V(3).Infof("Bulk select query: %s", selQuery.query)
 
-		wg.Add(1)
-		glog.V(2).Infof("spawning go routine for selecting rows from id: %d for a chunk of %d", j, prepareChunkSize)
-		go selQuery.executeReadAsync(db, rowData, wg)
+		goRoutinesSpun++
+		glog.V(2).Infof("spawning go routine %d for selecting rows from id: %d for a chunk of %d", goRoutinesSpun, j, prepareChunkSize)
+		go selQuery.executeReadAsync(db, rowData)
+
+		numSelected += prepareChunkSize
 
 		if breakLoop {
 			break
 		}
 
-		getIDQuery.query = fmt.Sprintf("SELECT id FROM %s WHERE id > %d ORDER BY id asc LIMIT 1 OFFSET %d", table, j, prepareChunkSize)
-		getIDQuery.executeRead(db).Scan(&j)
-	}
-	wg.Wait() // waiting for all go routines to finish
-	for {     // since wait is already done, here we get all rows using nonblocking channel reception
-		select {
-		case rows := <-rowData:
-			wg.Add(1)
-			glog.V(2).Infof("Spanwing go routine for inserting data") // TODO: more visibility req
-			go writeRowsToTempTable(expDb, tempTableName, rows, wg)
-		default:
-			break
+		getIDQuery.query = fmt.Sprintf("SELECT id FROM %s WHERE id > %d ORDER BY id asc LIMIT 1 OFFSET %d", table, j, prepareChunkSize-1)
+		glog.V(3).Infof("id select query: %s", getIDQuery.query)
+		r = getIDQuery.executeReadRow(db)
+		err = r.Scan(&j)
+		if err != nil {
+			glog.Fatal(err)
+		}
+		if prepN-numSelected <= prepareChunkSize {
+			// to address the last chunk
+			prepareChunkSize = prepN - numSelected
+			breakLoop = true
 		}
 	}
+	glog.V(1).Infof("bulk select go routines spun: %d", goRoutinesSpun)
+	var wg sync.WaitGroup
+	goRoutinesSpun = 0
+	for i := 0; i < chanSize; i++ {
+		// this is not the best way, for select may be a better way
+		wg.Add(1)
+		goRoutinesSpun++
+		glog.V(2).Infof("Spanwing go routine %d for inserting data!!!", goRoutinesSpun)
+		go writeRowsToTempTable(expDb, tempTableName, <-rowData, &wg, insertCommitsAfter)
+	}
+	glog.V(1).Infof("Waiting for insert routines to finish!!!")
 	wg.Wait() // waiting for all writes to finish
 }
 
-func prepare(db *sql.DB, expDb *sql.DB, table string, pr float64, prepareChunkSize int) {
+func prepare(db *sql.DB, expDb *sql.DB, table string, pr float64, prepareChunkSize int, insertCommitsAfter int) {
 	/*
 		prepare creates a new temporary table using the same schema as the specified table and copies `pr` amount of data to it
 	*/
 	var count int
-	err := db.QueryRow("SELECT COUNT(1) FROM %s", table).Scan(&count)
+	err := db.QueryRow(fmt.Sprintf("SELECT COUNT(1) FROM %s", table)).Scan(&count)
 	if err != nil {
 		glog.Fatal(err)
 	}
 	prepN := int(math.Round(pr * float64(count)))
 	glog.V(2).Infof("prepN has been set as %d", prepN)
 	glog.V(2).Infof("number of rows in the table %s: %d", table, count)
-
-	chunkCopyDataTempTable(db, expDb, table, prepN, prepareChunkSize, wg)
+	chunkCopyDataTempTable(db, expDb, table, prepN, prepareChunkSize, insertCommitsAfter)
 }
 
 func main() {
 
+	insertCommitsAfter, _ := strconv.ParseInt(os.Getenv("INSERT_COMMITS_AFTER"), 10, 0)
 	prepPhaseChunkSize, _ := strconv.ParseInt(os.Getenv("PREP_PHASE_CHUNK_SIZE"), 10, 0)
 	tempTablePrepSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_SIZE_RATIO"), 32) // the ratio of the temp table size to the actual table size, this amount of data is copied
 	// to the temporary table from the new table
 
+	if insertCommitsAfter == 0 {
+		defVal := 1000
+		glog.V(0).Infof("INSERT_COMMITS_AFTER has not been set, defaulting to %d", defVal)
+		insertCommitsAfter = int64(defVal)
+	}
 	if tempTablePrepSizeRatio == 0.00 {
 		defVal := 0.66
 		glog.V(0).Infof("TEMP_TABLE_SIZE_RATIO has not been set, defaulting to %0.2f", defVal)
@@ -300,7 +392,7 @@ func main() {
 		conn := getConnection(*host, *user, *pwd, *db, *port)
 		expConn := getConnection(*expHost, *user, *pwd, *db, *port)
 		glog.V(0).Infof("Starting prepare phase for table: %s", *table)
-		prepare(conn, expConn, *table, tempTablePrepSizeRatio, int(prepPhaseChunkSize))
+		prepare(conn, expConn, *table, tempTablePrepSizeRatio, int(prepPhaseChunkSize), int(insertCommitsAfter))
 	} else if *run {
 		glog.V(0).Info("Running 'run' phase!!!")
 		// TODO
