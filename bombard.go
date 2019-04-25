@@ -154,6 +154,7 @@ func writeRowsToTempTable(expDb *sql.DB, tempTableName string, rows *sql.Rows, w
 		}
 		baseQuery += "%s,"
 	}
+	glog.V(2).Infof("Insert query: %s", baseQuery)
 	for rows.Next() {
 		err = rows.Scan(dest...) // check out variadic functions in go
 		/*
@@ -205,26 +206,33 @@ func chunkCopyDataTempTable(db *sql.DB, expDb *sql.DB, table string, prepN int, 
 	j := startID
 	breakLoop := false
 	for {
+		glog.V(2).Infof("Selecting rows from %s starting with id: %d", table, j)
 		if j == endID {
+			glog.V(2).Infof("breakLoop condition matched")
 			breakLoop = true
 		}
 		var selQuery Query
 		var getIDQuery Query
 		selQuery.query = fmt.Sprintf("SELECT * FROM %s WHERE id >= %d ORDER BY id asc LIMIT %d", table, j, prepareChunkSize)
-		getIDQuery.query = fmt.Sprintf("SELECT id FROM %s WHERE id > %d ORDER BY id asc LIMIT 1 OFFSET %d", table, j, prepareChunkSize)
-		getIDQuery.executeRead(db).Scan(&j)
 		cTempTableCopy.q = append(cTempTableCopy.q, selQuery)
+
 		wg.Add(1)
+		glog.V(2).Infof("spawning go routine for selecting rows from id: %d for a chunk of %d", j, prepareChunkSize)
 		go selQuery.executeReadAsync(db, rowData, wg)
+
 		if breakLoop {
 			break
 		}
+
+		getIDQuery.query = fmt.Sprintf("SELECT id FROM %s WHERE id > %d ORDER BY id asc LIMIT 1 OFFSET %d", table, j, prepareChunkSize)
+		getIDQuery.executeRead(db).Scan(&j)
 	}
 	wg.Wait() // waiting for all go routines to finish
 	for {     // since wait is already done, here we get all rows using nonblocking channel reception
 		select {
 		case rows := <-rowData:
 			wg.Add(1)
+			glog.V(2).Infof("Spanwing go routine for inserting data") // TODO: more visibility req
 			go writeRowsToTempTable(expDb, tempTableName, rows, wg)
 		default:
 			break
@@ -245,11 +253,8 @@ func prepare(db *sql.DB, expDb *sql.DB, table string, pr float64, prepareChunkSi
 	prepN := int(math.Round(pr * float64(count)))
 	glog.V(2).Infof("prepN has been set as %d", prepN)
 	glog.V(2).Infof("number of rows in the table %s: %d", table, count)
-	//prepN is now the number of rows to be copied(from the end) to the temporary table and copied to disk
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go chunkCopyDataTempTable(db, expDb, table, prepN, prepareChunkSize, wg)
-	wg.Wait()
+
+	chunkCopyDataTempTable(db, expDb, table, prepN, prepareChunkSize, wg)
 }
 
 func main() {
