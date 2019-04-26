@@ -201,11 +201,11 @@ func getRunChunk(db *sql.DB, table string, runN int, prepN int) (int, int) {
 	if err != nil {
 		glog.Fatal(err)
 	}
-	err = db.QueryRow(fmt.Sprintf("SELECT id FROM %s ORDER BY ID DESC LIMIT 1 OFFSET %d", table, runN)).Scan(&endID)
+	err = db.QueryRow(fmt.Sprintf("SELECT id FROM %s ORDER BY ID DESC LIMIT 1 OFFSET %d", table, prepN)).Scan(&endID)
 	if err != nil {
 		glog.Fatal(err)
 	}
-	err = db.QueryRow(fmt.Sprintf("SELECT COUNT(1) FROM %s WHERE id >= %d and i <= %d", table, startID, endID)).Scan(&count)
+	err = db.QueryRow(fmt.Sprintf("SELECT COUNT(1) FROM %s WHERE id >= %d and i < %d", table, startID, endID)).Scan(&count)
 	return startID, count
 }
 
