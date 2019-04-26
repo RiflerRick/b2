@@ -34,6 +34,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -60,8 +61,9 @@ func (e dbError) Error() string {
 Query defines the query itself, along with wait_time in milliseconds and error in int
 */
 type Query struct {
-	query string
-	wt    int
+	query     string
+	queryType string
+	wt        int
 }
 
 /*
@@ -73,14 +75,18 @@ type Transaction struct {
 }
 
 /*
-QueryBatch defines the batch of queries to be executed
-q is the query defined, sleep is the sleep time between queries in milliseconds, size is the number of queries in the batch
+Feasible Query defines a query that can be used to hit the original table during benchmakring
 */
-type QueryBatch struct {
-	q     []Query
-	db    *sql.DB
-	sleep int
-	size  int
+type FeasibleQuery interface {
+	getQueryType() string
+	getQuery() string
+	getWaitTime() int
+	executeRead(db *sql.DB) *sql.Rows
+	executeReadRow(db *sql.DB) *sql.Row
+	executeReadAsync(db *sql.DB, rowChan chan *sql.Rows)
+	executeReadRowAsync(db *sql.DB, rowChan chan *sql.Row)
+	executeWrite(db *sql.DB)
+	executeWriteAsync(db *sql.DB)
 }
 
 func (q Query) executeRead(db *sql.DB) *sql.Rows {
@@ -162,6 +168,199 @@ func (q Query) executeWriteAsync(db *sql.DB) {
 		return
 	}
 	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+}
+
+/*
+	function to publish data to the bus after reading from the source db
+	to be called as a go routine. publishes data to the bus channel to be consumed by bombarding routines
+*/
+func publishToBus(db *sql.DB, table string, startID int, count int, timeToRun int, readChunkSize *int, startTime *time.Time, bus chan *sql.Rows) {
+
+	source := rand.NewSource(time.Now().UnixNano())
+	r := rand.New(source)
+	for true {
+		timeNow := time.Now()
+		if int(math.Round(timeNow.Sub(*startTime).Minutes())) > timeToRun {
+			break
+		}
+		offset := r.Intn(count)
+		rows, err := db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", table, startID, *readChunkSize, offset))
+		if err != nil {
+			glog.Info(err)
+			return
+		}
+		bus <- rows
+	}
+}
+
+func getRunChunk(db *sql.DB, table string, runN int, prepN int) (int, int) {
+	var startID int
+	var endID int
+	var count int
+	err := db.QueryRow(fmt.Sprintf("SELECT id FROM %s ORDER BY ID DESC LIMIT 1 OFFSET %d", table, runN)).Scan(&startID)
+	if err != nil {
+		glog.Fatal(err)
+	}
+	err = db.QueryRow(fmt.Sprintf("SELECT id FROM %s ORDER BY ID DESC LIMIT 1 OFFSET %d", table, runN)).Scan(&endID)
+	if err != nil {
+		glog.Fatal(err)
+	}
+	err = db.QueryRow(fmt.Sprintf("SELECT COUNT(1) FROM %s WHERE id >= %d and i <= %d", table, startID, endID)).Scan(&count)
+	return startID, count
+}
+
+func getSubset(colSelect map[string]bool) {
+	for k := range colSelect {
+		if rand.Intn(2) == 1 {
+			colSelect[k] = true
+		} else {
+			colSelect[k] = false
+		}
+	}
+
+}
+
+func getQuery(queryType string, tableName string, colData map[string]interface{}, indexedCols map[string]bool, allowMissingIndex map[string]bool) [2]interface{} {
+	// insert and update are dependent on delete queries, for each insert and update a corresponding
+	// delete must be fired first
+
+	// the first string returned is the actual query, the second one is the dependent query
+	queries := [2]interface{}{nil, nil}
+	dependentQueryHit := false
+	var colSelect map[string]bool
+	for k := range colData {
+		colSelect[k] = false
+	}
+	for true {
+		if queryType == "read" {
+			getSubset(colSelect)
+			baseQuery := fmt.Sprintf("SELECT * FROM %s WHERE ", tableName)
+			for k, v := range colData {
+				if allowMissingIndex["read"] {
+					if colSelect[k] {
+						baseQuery += fmt.Sprintf("%s = %s and ", k, v)
+					}
+				} else {
+					if colSelect[k] && indexedCols[k] {
+						baseQuery += fmt.Sprintf("%s = %s and ", k, v)
+					}
+				}
+			}
+			baseQuery = strings.TrimSuffix(baseQuery, " and ")
+			queries[0] = baseQuery
+			break
+		} else if queryType == "create" {
+			baseQuery := fmt.Sprintf("INSERT INTO %s VALUES (")
+			for _, v := range colData {
+				baseQuery += fmt.Sprintf("%s, ", v)
+			}
+			baseQuery = strings.TrimSuffix(baseQuery, ",")
+			baseQuery += fmt.Sprintf(")")
+			queryType = "delete"
+			queries[0] = baseQuery
+			dependentQueryHit = true
+		} else if queryType == "update" {
+			baseQuery := fmt.Sprintf("UPDATE %s SET ")
+			getSubset(colSelect)
+			for k, v := range colData {
+				if allowMissingIndex["update"] {
+					if colSelect[k] {
+						baseQuery += fmt.Sprintf("%s = %s,", k, v)
+					}
+				} else {
+					if colSelect[k] && indexedCols[k] {
+						baseQuery += fmt.Sprintf("%s = %s,", k, v)
+					}
+				}
+			}
+			baseQuery = strings.TrimSuffix(baseQuery, ",") + " WHERE "
+			getSubset(colSelect)
+			for k, v := range colData {
+				if allowMissingIndex["update"] {
+					if colSelect[k] {
+						baseQuery += fmt.Sprintf("%s = %s and ", k, v)
+					}
+				} else {
+					if colSelect[k] && indexedCols[k] {
+						baseQuery += fmt.Sprintf("%s = %s and ", k, v)
+					}
+				}
+			}
+			baseQuery = strings.TrimSuffix(baseQuery, " and ")
+			queryType = "delete"
+			queries[0] = baseQuery
+			dependentQueryHit = true
+		} else {
+			baseQuery := fmt.Sprintf("DELETE FROM %s ", tableName)
+			if !dependentQueryHit {
+				getSubset(colSelect)
+			}
+			for k, v := range colData {
+				if allowMissingIndex["read"] {
+					if colSelect[k] {
+						baseQuery += fmt.Sprintf("%s = %s and ", k, v)
+					}
+				} else {
+					if colSelect[k] && indexedCols[k] {
+						baseQuery += fmt.Sprintf("%s = %s and ", k, v)
+					}
+				}
+			}
+			baseQuery = strings.TrimSuffix(baseQuery, " and ")
+			if dependentQueryHit {
+				queries[1] = baseQuery
+			} else {
+				queries[0] = baseQuery
+			}
+			break
+		}
+	}
+	return queries
+}
+
+/*
+subscribe to bus for hitting the db. sleep decides how much to sleep in between queries
+queryTypeCPM: map storing the CPM values for each query. The type of query to be fired will be chosen by this CPM
+*/
+func bombard(queryType string, tableName string, db *sql.DB, bus chan *sql.Rows, sleepTime int, indexedCols map[string]bool, allowMissingIndex map[string]bool, qWT chan int) {
+	var r *sql.Rows
+	var q Query
+	for {
+		select {
+		case r = <-bus:
+			cols, _ := r.Columns()
+			for r.Next() {
+				columns := make([]interface{}, len(cols))
+				columnPointers := make([]interface{}, len(cols))
+				for i := range columns {
+					columnPointers[i] = &columns[i]
+				}
+				err := r.Scan(columnPointers...)
+				if err != nil {
+					glog.Info(err)
+					return
+				}
+				colData := make(map[string]interface{})
+				for i, colName := range cols {
+					val := columnPointers[i].(*interface{})
+					colData[colName] = *val
+				}
+				if queryType == "select" {
+					query := getQuery(queryType, tableName, colData, indexedCols, allowMissingIndex)
+					if queryType == "select" || queryType == "delete" {
+						// no dependent query
+						q.query, _ = query[0].(string) // type assertion for string type
+						q.executeRead(db)
+						qWT <- q.wt
+						time.Sleep(time.Millisecond * time.Duration(sleepTime))
+					}
+				}
+			}
+		default:
+			break
+		}
+
+	}
 }
 
 func writeRowsToTempTable(expDb *sql.DB, tempTableName string, rows *sql.Rows, wg *sync.WaitGroup, insertCommitsAfter int) {
@@ -377,7 +576,15 @@ func main() {
 	run := flag.Bool("run", false, "if run")
 	// verbose := flag.Bool("verbose", false, "verbose logging")
 	// dry := flag.Bool("dry", false, "dry run")
-	// cpm := flag.Int("cpm", 10, "calls per minute on the table")
+	createCPM := flag.Int("create-cpm", 0, "desired insert calls per minute on the table")
+	readCPM := flag.Int("read-cpm", 0, "desired select calls per minute on the table")
+	updateCPM := flag.Int("update-cpm", 0, "desired update calls per minute on the table")
+	deleteCPM := flag.Int("delete-cpm", 0, "desired delete calls per minute on the table")
+	allowMissingIndexRead := flag.Bool("allow-missing-index-reads", false, "allows missing index reads if true")
+	allowMissingIndexUpdate := flag.Bool("allow-missing-index-updates", false, "allows missing index updates if true")
+	allowMissingIndexDelete := flag.Bool("allow-missing-index-deletes", false, "allows missing index deletes if true")
+	time := flag.Int("time", 10, "time in minutes to bombard")
+
 	flag.Parse()
 
 	if *askPass {
