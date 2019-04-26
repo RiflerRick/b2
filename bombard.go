@@ -350,7 +350,19 @@ func bombard(queryType string, tableName string, db *sql.DB, bus chan *sql.Rows,
 					if queryType == "select" || queryType == "delete" {
 						// no dependent query
 						q.query, _ = query[0].(string) // type assertion for string type
-						q.executeRead(db)
+						if queryType == "select" {
+							q.executeRead(db)
+						} else {
+							q.executeWrite(db)
+						}
+						qWT <- q.wt
+						time.Sleep(time.Millisecond * time.Duration(sleepTime))
+					} else {
+						q.query, _ = query[1].(string)
+						q.executeWrite(db)
+						qWT <- q.wt
+						q.query, _ = query[0].(string)
+						q.executeWrite(db)
 						qWT <- q.wt
 						time.Sleep(time.Millisecond * time.Duration(sleepTime))
 					}
