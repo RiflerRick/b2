@@ -197,11 +197,11 @@ func getRunChunk(db *sql.DB, table string, runN int, prepN int) (int, int) {
 	var startID int
 	var endID int
 	var count int
-	err := db.QueryRow(fmt.Sprintf("SELECT id FROM %s ORDER BY ID DESC LIMIT 1 OFFSET %d", table, runN)).Scan(&startID)
+	err := db.QueryRow(fmt.Sprintf("SELECT id FROM %s ORDER BY ID DESC LIMIT 1 OFFSET %d", table, prepN)).Scan(&startID)
 	if err != nil {
 		glog.Fatal(err)
 	}
-	err = db.QueryRow(fmt.Sprintf("SELECT id FROM %s ORDER BY ID DESC LIMIT 1 OFFSET %d", table, prepN)).Scan(&endID)
+	err = db.QueryRow(fmt.Sprintf("SELECT id FROM %s ORDER BY ID DESC LIMIT 1 OFFSET %d", table, 1)).Scan(&endID)
 	if err != nil {
 		glog.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func getQuery(queryType string, tableName string, colData map[string]interface{}
 subscribe to bus for hitting the db. sleep decides how much to sleep in between queries
 queryTypeCPM: map storing the CPM values for each query. The type of query to be fired will be chosen by this CPM
 */
-func bombard(queryType string, tableName string, db *sql.DB, bus chan *sql.Rows, sleepTime int, indexedCols map[string]bool, allowMissingIndex map[string]bool, qWT chan int) {
+func bombard(queryType string, tableName string, db *sql.DB, bus chan *sql.Rows, sleepTime int, indexedCols map[string]bool, allowMissingIndex map[string]bool, qWT chan int, busEmpty chan string) {
 	var r *sql.Rows
 	var q Query
 	for {
@@ -369,6 +369,7 @@ func bombard(queryType string, tableName string, db *sql.DB, bus chan *sql.Rows,
 				}
 			}
 		default:
+			busEmpty <- queryType
 			break
 		}
 
