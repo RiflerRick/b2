@@ -174,22 +174,28 @@ func (q Query) executeWriteAsync(db *sql.DB) {
 	function to publish data to the bus after reading from the source db
 	to be called as a go routine. publishes data to the bus channel to be consumed by bombarding routines
 */
-func publishToBus(db *sql.DB, table string, startID int, count int, timeToRun int, readChunkSize *int, startTime *time.Time, bus chan *sql.Rows) {
+func publishToBus(db *sql.DB, table string, startID int, count int, timeToRun int, readChunkSize *int, bus chan *sql.Rows, stopSignal chan bool, sleepTime *int) {
 
 	source := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(source)
-	for true {
-		timeNow := time.Now()
-		if int(math.Round(timeNow.Sub(*startTime).Minutes())) > timeToRun {
+	// timeNow := time.Now()
+	// if int(math.Round(timeNow.Sub(*startTime).Minutes())) > timeToRun {
+	// 	break
+	// }
+	for {
+		select {
+		case <-stopSignal:
 			break
+		default:
+			offset := r.Intn(count)
+			rows, err := db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", table, startID, *readChunkSize, offset))
+			if err != nil {
+				glog.Info(err)
+				return
+			}
+			bus <- rows
+			time.Sleep(time.Duration(*sleepTime) * time.Millisecond)
 		}
-		offset := r.Intn(count)
-		rows, err := db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", table, startID, *readChunkSize, offset))
-		if err != nil {
-			glog.Info(err)
-			return
-		}
-		bus <- rows
 	}
 }
 
