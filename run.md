@@ -27,6 +27,14 @@ export TEMP_TABLE_SIZE_RATIO=0.66
 
 ```
 
+## Bombard with itself
+
+DB benchmarking tools like sysbench and the like prepare their own tables, generate queries for their tables and hit those tables with it. If you know what your table is, you know what kind of data your table expects. However in this case, we are attempting to bombard a table whose structure we are not aware of beforehand.
+The table data itself can help us in bombarding the table with it. The following approach is therefore followed to do the same:
+
+prep-phase: we copy a percentage of data from the original table to a new temporary table preferably in a separate mysql database instance. Lets say this data starts from id x and goes till id y. Now from the original table, we can select rows between id x and id y and hit the temporary table with that data itself. This is important for a couple of reasons. First of all, if there are foreign keys of this table to any other table, randomly hitting such foreign key columns with values may result in an unprecendented number of foreign key constraint fails which may adversely affect the throughput, Moreover generating exactly the kind of data that may be stored in a column is a hard problem.
+The fact that we are trying to bombard queries of the same data as the original table may lead to an unprecedented number of unique/candidate key constraint fails as well which may also adversely affect the throughput. To counter this, every update and insert call is preceeded by a delete call for that same row. This therefore definitely affects the delete CPM in a way however, it is effectively executing create and update queries with the same data as the original table.
+
 ## Run phase
 
 The run phase will essentially select rows from the original table and perform CRUD operations on the temporary table. The `MasterPublishController` and the `MasterSubscriberController` controls the number of instances of publisher and consumers spun.
@@ -66,4 +74,4 @@ If `y` < `x`, the `MasterPublishController` will issue a signal through the `sto
 
 ## Subscriber
 
-The subscriber will be responsible for
+The subscriber will be responsible for subscribing to the `bus` and bombarding the database with it. The crux of the bombarding routine is maintaining the CPM for each type of query
