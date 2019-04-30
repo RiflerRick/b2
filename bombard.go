@@ -74,21 +74,6 @@ type Transaction struct {
 	wt          int
 }
 
-/*
-Feasible Query defines a query that can be used to hit the original table during benchmakring
-*/
-type FeasibleQuery interface {
-	getQueryType() string
-	getQuery() string
-	getWaitTime() int
-	executeRead(db *sql.DB) *sql.Rows
-	executeReadRow(db *sql.DB) *sql.Row
-	executeReadAsync(db *sql.DB, rowChan chan *sql.Rows)
-	executeReadRowAsync(db *sql.DB, rowChan chan *sql.Row)
-	executeWrite(db *sql.DB)
-	executeWriteAsync(db *sql.DB)
-}
-
 func (q Query) executeRead(db *sql.DB) *sql.Rows {
 	st := time.Now()
 	rows, err := db.Query(q.query)
@@ -168,6 +153,26 @@ func (q Query) executeWriteAsync(db *sql.DB) {
 		return
 	}
 	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+}
+
+func getUpdatedPublishChunkSize(metadata map[string]interface{}) int {
+	// TODO: more intelligence required
+	return metadata["chunk_size"].(int)
+}
+
+func getUpdatedPublishSleepTime(metadata map[string]interface{}) int {
+	// TODO: more intelligence required
+	return metadata["sleep_time"].(int)
+}
+
+func getUpdatedSubscribeChunkSize(metadata map[string]interface{}) int {
+	// TODO: more intelligence required
+	return metadata["chunk_size"].(int)
+}
+
+func getUpdatedSubscribeSleepTime(metadata map[string]interface{}) int {
+	// TODO: more intelligence required
+	return metadata["sleep_time"].(int)
 }
 
 /*
@@ -375,6 +380,7 @@ func bombard(queryType string, tableName string, db *sql.DB, bus chan *sql.Rows,
 				}
 			}
 		default:
+			// bus should never be empty
 			busEmpty <- queryType
 			break
 		}

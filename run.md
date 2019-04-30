@@ -39,15 +39,15 @@ note: the `bus` is simply a channel of type
 
 ### Publisher
 
-The publisher is responsible for selecting rows from the original table and publishing to the bus. The chunk size of rows selected from the original table is controlled by `readChunkSize`. The `readChunkSize` is supplied as a pointer to the publisher instances by the `MasterPublishController`. The sleep time after each select query is also supplied as a pointer to the publisher instances by the `MasterPublishController`. The `MasterPublishController` will maintain a channel of boolean type for signalling any publisher instance to stop.
+The publisher is responsible for selecting rows from the original table and publishing to the bus. The chunk size of rows selected from the original table is controlled by `readChunkSize`. The `readChunkSize` is supplied as a pointer to the publisher instances by the `MasterPublishController`. The sleep time after each select query is also supplied as a pointer to the publisher instances by the `MasterPublishController`. The `MasterPublishController` will maintain a channel `stopSignal` of boolean type for signalling any publisher instance to stop.
 
-The `MasterPublishController` can control the rate of publishing data to the bus in 2 ways:
+The `MasterPublishController` can control the rate of publishing data to the bus in 3 ways:
 
 - Increasing/Decreasing the number of publisher instances
 - Increasing/Decreasing the sleep time for every publisher
 - Increasing/Decreasing the readChunkSize of each publisher instance
 
-The crux of the problem is really deciding when to do either of the above 2 operations. The following parameters will be available at the disposal of the `MasterPublishController` to decide the same:
+In any case, the bus cannot be empty, from the consumer instances, if the bus is empty, it sends the query type as a string to the channel that is received by the `MasterPublishController` and the `MasterSubscribeController`. The following parameters will be available at the disposal of the `MasterPublishController` to decide the what to do in case of such an incident:
 
 - Number of publisher instances running
 - readChunkSize for each publish instance
@@ -56,9 +56,14 @@ The crux of the problem is really deciding when to do either of the above 2 oper
 - the average wait time of the each type of operation
 - number of consumers instances running
 
-Using these 6 parameters it is possible to make an approximate assumption of when to increase/decrease the number of running publish instances or the sleep time for each publisher.
+**Upscaling the publisher instances**
+For now the straightforward solution is to simply spawn a new publish routine in case the any of the consumer instances notify that the bus is empty. Although later on more intelligence need to be provided when deciding the to do any of increasing/decreasing the number of publish instances, increasing/decreasing the sleep time for every publisher or increasing/decreasing the readChunkSize of each publisher instance.
 
-**Algorithm**
-Lets say there are 3 publisher instances running with a readChunkSize of 1000 and a sleepTime of 500 milliseconds. Our goal is to decide whether the publisher is being a bottleneck in the throughput the queries on the temporary table(i.e. whether the consumers are waiting frequently on the bus for more data).
+**Downscaling the publisher instances**
+From the CPM for each query type it is possible to get the average wait time for each query type. For CRUD operations, lets assume, the average wait time for each operation is a,b,c and d respectively. We take the average of a,b,c and d. Let this be `x`.
+We also know the actual average wait times for each query type. Let these values be p,q,r and s respectively. We take the average of p,q,r and s. Let this be `y`
+If `y` < `x`, the `MasterPublishController` will issue a signal through the `stopSignal` channel. This will stop any one go routine
 
-For each query type, we fetch the average wait time(converted to minutes) and divide 1 minute by this average wait time. Let this be X. X is now the approximate total number of queries hit by one consumer in 1 minute. We multiply this value with the total number of consumers and this gives us the expected calls per minute value. If the actual calls per minute value for that type of query is less than this expected number, we can decide to do either of the 3 things mentioned a while back
+## Subscriber
+
+The subscriber will be responsible for
