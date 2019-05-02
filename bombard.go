@@ -95,9 +95,8 @@ type MasterSubscribeController struct {
 Controller can either be the MasterPublishController or MasterSubscribeController
 */
 type Controller interface {
-	upscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, cM map[string]interface{}, dontCare *bool)
-	downscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, cM map[string]interface{}, dontCare *bool)
-	apply(queryType *string, cM map[string]interface{}, dontCare *bool) bool
+	upscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, cM map[string]interface{}, dontCare *bool, scale chan bool)
+	downscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, cM map[string]interface{}, dontCare *bool, scale chan bool)
 }
 
 func (q Query) executeRead(db *sql.DB) *sql.Rows {
@@ -181,19 +180,21 @@ func (q Query) executeWriteAsync(db *sql.DB) {
 	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
 }
 
-func (mpc MasterPublishController) upscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, cM map[string]interface{}, dontCare *bool) {
+func (mpc MasterPublishController) upscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, cM map[string]interface{}, dontCare *bool, scale chan bool) {
 	if *dontCare {
 		cM["instances"].(map[string]interface{})[*queryType] = cM["instances"].(map[string]interface{})[*queryType].(int) + 1
+		scale <- true
 	}
 }
 
-func (msc MasterSubscribeController) upscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, cM map[string]interface{}, dontCare *bool) {
+func (msc MasterSubscribeController) upscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, cM map[string]interface{}, dontCare *bool, scale chan bool) {
 	if rM["CPM"].(map[string]interface{})[*queryType].(int) > dM["CPM"].(map[string]interface{})[*queryType].(int) {
 		cM["instances"].(map[string]interface{})[*queryType] = cM["instances"].(map[string]interface{})[*queryType].(int) + 1
+		scale <- true
 	}
 }
 
-func (mpc MasterPublishController) downscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, cM map[string]interface{}, dontCare *bool) {
+func (mpc MasterPublishController) downscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, cM map[string]interface{}, dontCare *bool, scale chan bool) {
 	sum := 0
 	for _, v := range dM["wT"].(map[string]interface{}) {
 		sum += v.(int)
@@ -208,10 +209,11 @@ func (mpc MasterPublishController) downscale(queryType *string, dM map[string]in
 	// run wait time is greater than desired wait time
 	if avgRMWT > avgDMWT {
 		cM["instances"].(map[string]interface{})[*queryType] = cM["instances"].(map[string]interface{})[*queryType].(int) - 1
+		scale <- false
 	}
 }
 
-func (msc MasterSubscribeController) downscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, cM map[string]interface{}, dontCare *bool) {
+func (msc MasterSubscribeController) downscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, cM map[string]interface{}, dontCare *bool, scale chan bool) {
 	sum := 0
 	for _, v := range dM["wT"].(map[string]interface{}) {
 		sum += v.(int)
@@ -226,6 +228,7 @@ func (msc MasterSubscribeController) downscale(queryType *string, dM map[string]
 	// run wait time is greater than desired wait time
 	if avgRMWT > avgDMWT {
 		cM["instances"].(map[string]interface{})[*queryType] = cM["instances"].(map[string]interface{})[*queryType].(int) - 1
+		scale <- false
 	}
 }
 
