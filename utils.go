@@ -88,6 +88,22 @@ func chunkCopyDataTempTable(db *sql.DB, expDb *sql.DB, table string, prepN int, 
 	wg.Wait() // waiting for all writes to finish
 }
 
+func getRunChunk(db *sql.DB, table string, runN int, prepN int) (int, int) {
+	var startID int
+	var endID int
+	var count int
+	err := db.QueryRow(fmt.Sprintf("SELECT id FROM %s ORDER BY ID DESC LIMIT 1 OFFSET %d", table, runN)).Scan(&startID)
+	if err != nil {
+		glog.Fatal(err)
+	}
+	err = db.QueryRow(fmt.Sprintf("SELECT id FROM %s ORDER BY ID DESC LIMIT 1 OFFSET %d", table, prepN)).Scan(&endID)
+	if err != nil {
+		glog.Fatal(err)
+	}
+	err = db.QueryRow(fmt.Sprintf("SELECT COUNT(1) FROM %s WHERE id >= %d and i < %d", table, startID, endID)).Scan(&count)
+	return startID, count
+}
+
 /*
 	function to publish data to the bus after reading from the source db
 	to be called as a go routine. publishes data to the bus channel to be consumed by bombarding routines
@@ -115,22 +131,6 @@ func publishToBus(db *sql.DB, table *string, startID *int, count *int, readChunk
 			time.Sleep(time.Duration(*sleepTime) * time.Millisecond)
 		}
 	}
-}
-
-func getRunChunk(db *sql.DB, table string, runN int, prepN int) (int, int) {
-	var startID int
-	var endID int
-	var count int
-	err := db.QueryRow(fmt.Sprintf("SELECT id FROM %s ORDER BY ID DESC LIMIT 1 OFFSET %d", table, runN)).Scan(&startID)
-	if err != nil {
-		glog.Fatal(err)
-	}
-	err = db.QueryRow(fmt.Sprintf("SELECT id FROM %s ORDER BY ID DESC LIMIT 1 OFFSET %d", table, prepN)).Scan(&endID)
-	if err != nil {
-		glog.Fatal(err)
-	}
-	err = db.QueryRow(fmt.Sprintf("SELECT COUNT(1) FROM %s WHERE id >= %d and i < %d", table, startID, endID)).Scan(&count)
-	return startID, count
 }
 
 func getSubset(colSelect map[string]bool) {
@@ -357,4 +357,14 @@ func writeRowsToTempTable(expDb *sql.DB, tempTableName string, rows *sql.Rows, w
 		tx.executeVariadic(baseQuery, colData...) // to handle the last bit
 		tx.commit()
 	}
+}
+
+func contains(slice []string, item string) bool {
+	set := make(map[string]struct{}, len(slice))
+	for _, s := range slice {
+		set[s] = struct{}{}
+	}
+
+	_, ok := set[item]
+	return ok
 }
