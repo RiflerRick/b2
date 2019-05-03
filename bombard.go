@@ -214,16 +214,8 @@ func (mpc MasterPublishController) downscale(queryType *string, dM map[string]in
 }
 
 func (msc MasterSubscribeController) downscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, cM map[string]interface{}, dontCare *bool, scale chan bool) {
-	sum := 0
-	for _, v := range dM["wT"].(map[string]interface{}) {
-		sum += v.(int)
-	}
-	avgDMWT := sum / len(dM["wT"].(map[string]interface{}))
-	sum = 0
-	for _, v := range rM["wT"].(map[string]interface{}) {
-		sum += v.(int)
-	}
-	avgRMWT := sum / len(rM["wT"].(map[string]interface{}))
+	avgDMWT := dM["wT"].(map[string]interface{})[*queryType].(int)
+	avgRMWT := rM["wT"].(map[string]interface{})[*queryType].(int)
 	// TODO: add a tolerance
 	// run wait time is greater than desired wait time
 	if avgRMWT > avgDMWT {

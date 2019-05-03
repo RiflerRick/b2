@@ -88,8 +88,7 @@ improvements req: control sleep time
 ```
 
 **Downscaling the subscriber instances**
-From the CPM for each query type it is possible to get the average wait time for each query type. For CRUD operations, lets assume, the average wait time for each operation is a,b,c and d respectively. We take the average of a,b,c and d. Let this be `x`.
-We also know the actual average wait times for each query type. Let these values be p,q,r and s respectively. We take the average of p,q,r and s. Let this be `y`
-If `y` > `x`, the `MasterSubscribeController` will issue a signal through the `stopSignal` channel. This will stop any one go routine
+From the CPM for each query type it is possible to get the average wait time for each query type. For CRUD operations, lets assume, the average wait time for one operation is `x`. We also know the actual average wait times for each query type. Let this value for a query_type be `y`
+If `y` > `x`, the `MasterSubscribeController` will issue a signal through the `stopSignal` channel. This will stop any one go routine.
 
 **NOTE: In either the publisher or subscriber, incase of a conflict, downscaling will get the priority**
