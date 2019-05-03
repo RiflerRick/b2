@@ -108,7 +108,7 @@ func getRunChunk(db *sql.DB, table string, runN int, prepN int) (int, int) {
 	function to publish data to the bus after reading from the source db
 	to be called as a go routine. publishes data to the bus channel to be consumed by bombarding routines
 */
-func publishToBus(db *sql.DB, table *string, startID *int, count *int, readChunkSize *int, sleepTime *int, bus chan *sql.Rows, stopSignal chan bool) {
+func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus chan *sql.Rows, stopSignal chan bool) {
 
 	source := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(source)
@@ -122,13 +122,13 @@ func publishToBus(db *sql.DB, table *string, startID *int, count *int, readChunk
 			break
 		default:
 			offset := r.Intn(*count)
-			rows, err := db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", table, startID, *readChunkSize, offset))
+			rows, err := mpc.db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", mpc.tableName, startID, mpc.cM["chunk_size"].(map[string]interface{})["select"].(int), offset))
 			if err != nil {
 				glog.Info(err)
 				return
 			}
 			bus <- rows
-			time.Sleep(time.Duration(*sleepTime) * time.Millisecond)
+			time.Sleep(time.Duration(mpc.cM["sleep_time"].(map[string]interface{})["select"].(int)) * time.Millisecond)
 		}
 	}
 }
@@ -144,7 +144,7 @@ func getSubset(colSelect map[string]bool) {
 
 }
 
-func getQuery(queryType *string, tableName *string, writeChunkSize *int, colData map[string]interface{}, indexedCols map[string]bool, allowMissingIndex map[string]bool) string {
+func getQuery(queryType *string, tableName *string, writeChunkSize int, colData map[string]interface{}, indexedCols map[string]bool, allowMissingIndex map[string]bool) string {
 
 	var query string
 	var colSelect map[string]bool
@@ -234,7 +234,7 @@ func getQuery(queryType *string, tableName *string, writeChunkSize *int, colData
 subscribe to bus for hitting the db. sleep decides how much to sleep in between queries
 queryTypeCPM: map storing the CPM values for each query. The type of query to be fired will be chosen by this CPM
 */
-func bombard(queryType *string, tableName *string, db *sql.DB, sleepTime *int, writeChunkSize *int, bus chan *sql.Rows, indexedCols map[string]bool, allowMissingIndex map[string]bool, qWT chan int, busEmpty chan string, stopSignal chan bool) {
+func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Rows, indexedCols map[string]bool, allowMissingIndex map[string]bool, qWT chan int, busEmpty chan string, stopSignal chan bool) {
 	var r *sql.Rows
 	var q Query
 	for {
@@ -259,17 +259,17 @@ func bombard(queryType *string, tableName *string, db *sql.DB, sleepTime *int, w
 					val := columnPointers[i].(*interface{})
 					colData[colName] = *val
 				}
-				query := getQuery(queryType, tableName, writeChunkSize, colData, indexedCols, allowMissingIndex)
+				query := getQuery(queryType, msc.tableName, msc.cM["chunk_size"].(map[string]interface{})[*queryType].(int), colData, indexedCols, allowMissingIndex)
 				if *queryType == "select" {
 					q.query = query
-					q.executeRead(db)
+					q.executeRead(msc.db)
 					qWT <- q.wt
-					time.Sleep(time.Millisecond * time.Duration(*sleepTime))
+					time.Sleep(time.Millisecond * time.Duration(msc.cM["sleep_time"].(map[string]interface{})[*queryType].(int)))
 				} else {
 					q.query = query
-					q.executeWrite(db)
+					q.executeWrite(msc.db)
 					qWT <- q.wt
-					time.Sleep(time.Millisecond * time.Duration(*sleepTime))
+					time.Sleep(time.Millisecond * time.Duration(msc.cM["sleep_time"].(map[string]interface{})[*queryType].(int)))
 				}
 			}
 		default:
