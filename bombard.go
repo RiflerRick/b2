@@ -79,19 +79,67 @@ cM: controllerMetadata consisting of instances_running, sleepTime and chunkSize
 */
 
 /*
-MasterPublishController
+Metadata that has to be accessed by multiple entities
+*/
+type Metadata interface {
+	read(queryType *string, typeOfData *string, data *interface{})
+	write(queryType *string, typeOfData *string, data interface{})
+}
+
+// mutex cannot obviously be part of
+// TODO: add individual mutexes in the run(...) method
+var dmCPMMutex map[string]sync.RWMutex
+var dmWTMutex map[string]sync.RWMutex
+
+var rmCPMMutex map[string]sync.RWMutex
+var rmWTMutex map[string]sync.RWMutex
+
+var cmInstancesMutex map[string]sync.RWMutex
+var cmSleepTimeMutex map[string]sync.RWMutex
+var cmChunkSizeMutex map[string]sync.RWMutex
+
+/*
+DesiredMetadata will never change. contains calls per minute and wait time
+For each type, the keys of the map will be the querytypes
+*/
+type DesiredMetadata struct {
+	cpm map[string]interface{}
+	wT  map[string]interface{}
+}
+
+/*
+RunMetadata will be updated during run phase. contains calls per minute and wait time
+For each type, the keys of the map will be the querytypes
+*/
+type RunMetadata struct {
+	cpm map[string]interface{}
+	wT  map[string]interface{}
+}
+
+/*
+ControllerMetadata is the metadata maintained by MasterPublishController and MasterSubscribeController
+For each type, the keys of the map will be the querytypes
+*/
+type ControllerMetadata struct {
+	instances map[string]interface{}
+	chunkSize map[string]interface{}
+	sleepTime map[string]interface{}
+}
+
+/*
+MasterPublishController for controlling all publishers
 */
 type MasterPublishController struct {
-	cM        map[string]interface{}
+	cM        ControllerMetadata
 	tableName *string
 	db        *sql.DB
 }
 
 /*
-MasterSubscribeController
+MasterSubscribeController for controlling all subscribers
 */
 type MasterSubscribeController struct {
-	cM        map[string]interface{}
+	cM        ControllerMetadata
 	tableName *string
 	db        *sql.DB
 }
@@ -177,31 +225,46 @@ func (q Query) executeWriteAsync(db *sql.DB) {
 	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
 }
 
-func (mpc MasterPublishController) upscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, dontCare *bool) bool {
+func (mpc MasterPublishController) upscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
 	if *dontCare {
 		return true
 	}
 	return false
 }
 
-func (msc MasterSubscribeController) upscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, dontCare *bool) bool {
-	if rM["CPM"].(map[string]interface{})[*queryType].(int) > dM["CPM"].(map[string]interface{})[*queryType].(int) {
+func (msc MasterSubscribeController) upscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
+	typeOfData := "cpm"
+	var rCPM interface{}
+	var dCPM interface{}
+	rM.read(queryType, &typeOfData, &rCPM)
+	dM.read(queryType, &typeOfData, &dCPM)
+	if rCPM.(int) < dCPM.(int) {
 		return true
 	}
 	return false
 }
 
-func (mpc MasterPublishController) downscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, dontCare *bool) bool {
+func (mpc MasterPublishController) downscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
 	sum := 0
-	for _, v := range dM["wT"].(map[string]interface{}) {
-		sum += v.(int)
-	}
-	avgDMWT := sum / len(dM["wT"].(map[string]interface{}))
+	var createVal interface{}
+	var readVal interface{}
+	var updateVal interface{}
+	var deleteVal interface{}
+	wT := "wT"
+	possibleQueryTypes := []string{"create", "read", "update", "delete"}
+	dM.read(&possibleQueryTypes[0], &wT, &createVal)
+	dM.read(&possibleQueryTypes[1], &wT, &readVal)
+	dM.read(&possibleQueryTypes[2], &wT, &updateVal)
+	dM.read(&possibleQueryTypes[3], &wT, &deleteVal)
+	sum = createVal.(int) + readVal.(int) + updateVal.(int) + deleteVal.(int)
+	avgDMWT := sum / 4
 	sum = 0
-	for _, v := range rM["wT"].(map[string]interface{}) {
-		sum += v.(int)
-	}
-	avgRMWT := sum / len(rM["wT"].(map[string]interface{}))
+	rM.read(&possibleQueryTypes[0], &wT, &createVal)
+	rM.read(&possibleQueryTypes[1], &wT, &readVal)
+	rM.read(&possibleQueryTypes[2], &wT, &updateVal)
+	rM.read(&possibleQueryTypes[3], &wT, &deleteVal)
+	sum = createVal.(int) + readVal.(int) + updateVal.(int) + deleteVal.(int)
+	avgRMWT := sum / 4
 	// TODO: add a tolerance
 	// run wait time is greater than desired wait time
 	if avgRMWT > avgDMWT {
@@ -210,18 +273,23 @@ func (mpc MasterPublishController) downscale(queryType *string, dM map[string]in
 	return false
 }
 
-func (msc MasterSubscribeController) downscale(queryType *string, dM map[string]interface{}, rM map[string]interface{}, dontCare *bool) bool {
-	avgDMWT := dM["wT"].(map[string]interface{})[*queryType].(int)
-	avgRMWT := rM["wT"].(map[string]interface{})[*queryType].(int)
+func (msc MasterSubscribeController) downscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
+	var avgDMWT interface{}
+	wT := "wT"
+	dM.read(queryType, &wT, &avgDMWT)
+	var avgRMWT interface{}
+	rM.read(queryType, &wT, &avgRMWT)
+
 	// TODO: add a tolerance
 	// run wait time is greater than desired wait time
-	if avgRMWT > avgDMWT {
+	if avgRMWT.(int) > avgDMWT.(int) {
 		return true
 	}
 	return false
 }
 
-func computeMetrics(queryType string, rM map[string]interface{}, qWT map[string]interface{}, stopSignal chan bool) {
+func computeMetrics(queryType string, rM RunMetadata, qWT map[string]interface{}, stopSignal chan bool) {
+	metricVisibilityWindow := 500 // in milliseconds
 	totalQExecuted := 0
 	totalWT := 0
 	startTime := time.Now()
@@ -231,15 +299,27 @@ func computeMetrics(queryType string, rM map[string]interface{}, qWT map[string]
 			break
 		default:
 			totalWT += <-qWT[queryType].(chan int)
-			timeNow := (time.Now()).Sub(startTime).Minutes()
+			timeElapsed := (time.Now()).Sub(startTime)
+			timeElapsedMin := timeElapsed.Minutes()
+			timeElapsedMil := int(timeElapsed.Seconds() * 1000)
+			var rMCPM interface{}
+			var rMWT interface{}
+			cpmType := "cpm"
+			wTType := "wT"
+			rM.read(&queryType, &cpmType, &rMCPM)
+			rM.read(&queryType, &wTType, &rMCPM)
+
+			if timeElapsedMil%metricVisibilityWindow == 0 {
+				glog.V(1).Infof("queryType: %s; CPM: %d; wT: %d ms", queryType, rMCPM.(int), rMWT.(int))
+			}
 			totalQExecuted++
-			rM["CPM"].(map[string]interface{})[queryType] = math.Round(float64(totalQExecuted) / timeNow)
-			rM["wT"].(map[string]interface{})[queryType] = math.Round(float64(totalWT / totalQExecuted))
+			rM.write(&queryType, &cpmType, int(math.Round(float64(totalQExecuted)/timeElapsedMin)))
+			rM.write(&queryType, &cpmType, int(math.Round(float64(totalWT/totalQExecuted))))
 		}
 	}
 }
 
-func (msc MasterSubscribeController) run(queryType string, dM map[string]interface{}, rM map[string]interface{}, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, busEmpty chan string, bus chan *sql.Rows, wg *sync.WaitGroup) {
+func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, busEmpty chan string, bus chan *sql.Rows, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	subscribeDontCare := false
@@ -257,30 +337,48 @@ func (msc MasterSubscribeController) run(queryType string, dM map[string]interfa
 		"delete": deleteQWT,
 	}
 	var stopMetricCompute chan bool
+	glog.V(1).Info("Spawning all computeMetrics rountines")
 	go computeMetrics("create", rM, qWT, stopMetricCompute)
 	go computeMetrics("read", rM, qWT, stopMetricCompute)
 	go computeMetrics("update", rM, qWT, stopMetricCompute)
 	go computeMetrics("delete", rM, qWT, stopMetricCompute)
 	startTime := time.Now()
 
+	var currentInstances interface{}
+	typeOfData := "instances"
 	for true {
 		if (time.Now()).Sub(startTime).Minutes() > float64(timeToRun) {
 			break
 		}
 		canDownscale = msc.downscale(&queryType, dM, rM, &subscribeDontCare)
 		canUpscale = msc.upscale(&queryType, dM, rM, &subscribeDontCare)
+
 		if canDownscale {
-			msc.cM["instances"].(map[string]interface{})[queryType] = msc.cM["instances"].(map[string]interface{})[queryType].(int) - 1
+			glog.V(1).Info("downscaling subscriber instances by one")
+			msc.cM.read(&queryType, &typeOfData, &currentInstances)
+			currentInstances = currentInstances.(int) - 1
+			msc.cM.write(&queryType, &typeOfData, &currentInstances)
 			subscriberStopSignal <- true
 		} else if canUpscale {
-			msc.cM["instances"].(map[string]interface{})[queryType] = msc.cM["instances"].(map[string]interface{})[queryType].(int) + 1
+			glog.V(1).Info("upscaling subscriber instances by one")
+			msc.cM.read(&queryType, &typeOfData, &currentInstances)
+			currentInstances = currentInstances.(int) + 1
+			msc.cM.write(&queryType, &typeOfData, &currentInstances)
 			go msc.bombard(&queryType, bus, indexedColumns, allowMissingIndex, qWT[queryType].(chan int), busEmpty, subscriberStopSignal)
 		}
 	}
-
+	glog.V(1).Info("Tearing down all subscriber instances")
+	msc.cM.read(&queryType, &typeOfData, &currentInstances)
+	for i := 0; i < currentInstances.(int); i++ {
+		subscriberStopSignal <- true
+	}
+	glog.V(1).Info("Tearing down all `computeMetrics` instances")
+	for i := 0; i < 4; i++ {
+		stopMetricCompute <- true
+	}
 }
 
-func (mpc MasterPublishController) run(queryType string, dM map[string]interface{}, rM map[string]interface{}, timeToRun int, bus chan *sql.Rows, busEmpty chan string, wg *sync.WaitGroup, startID int, runChunk int) {
+func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, bus chan *sql.Rows, busEmpty chan string, wg *sync.WaitGroup, startID int, runChunk int) {
 	defer wg.Done()
 
 	publishDontCare := false
@@ -288,6 +386,8 @@ func (mpc MasterPublishController) run(queryType string, dM map[string]interface
 	var canDownscale bool
 	var publisherStopSignal chan bool
 	startTime := time.Now()
+	var currentInstances interface{}
+	typeOfData := "instances"
 	for true {
 		if (time.Now()).Sub(startTime).Minutes() > float64(timeToRun) {
 			break
@@ -295,6 +395,7 @@ func (mpc MasterPublishController) run(queryType string, dM map[string]interface
 		for {
 			select {
 			case <-busEmpty:
+				glog.V(1).Info("Bus found to be empty")
 				publishDontCare = true
 				break
 			default:
@@ -304,43 +405,58 @@ func (mpc MasterPublishController) run(queryType string, dM map[string]interface
 		canDownscale = mpc.downscale(&queryType, dM, rM, &publishDontCare)
 		canUpscale = mpc.upscale(&queryType, dM, rM, &publishDontCare)
 		publishDontCare = false
+
 		if canDownscale {
-			mpc.cM["instances"].(map[string]interface{})[queryType] = mpc.cM["instances"].(map[string]interface{})[queryType].(int) - 1
+			glog.V(1).Info("downscaling publisher instances by 1")
+			mpc.cM.read(&queryType, &typeOfData, &currentInstances)
+			currentInstances = currentInstances.(int) - 1
+			mpc.cM.write(&queryType, &typeOfData, &currentInstances)
 			publisherStopSignal <- true
 		} else if canUpscale {
-			mpc.cM["instances"].(map[string]interface{})[queryType] = mpc.cM["instances"].(map[string]interface{})[queryType].(int) + 1
+			glog.V(1).Info("upscaling publisher instances by 1")
+			mpc.cM.read(&queryType, &typeOfData, &currentInstances)
+			currentInstances = currentInstances.(int) + 1
+			mpc.cM.write(&queryType, &typeOfData, &currentInstances)
 			go mpc.publishToBus(&startID, &runChunk, bus, publisherStopSignal)
 		}
 	}
-}
-
-func (mpc MasterPublishController) getUpdatedChunkSize(rm map[string]interface{}, cm map[string]interface{}) int {
-	// TODO: more intelligence required
-	return cm["chunk_size"].(int)
-}
-
-func (msc MasterSubscribeController) getUpdatedSleepTime(rm map[string]interface{}, cm map[string]interface{}) int {
-	// TODO: more intelligence required
-	return cm["sleep_time"].(int)
-}
-
-func (msc MasterSubscribeController) getUpdatedChunkSize(rm map[string]interface{}, cm map[string]interface{}) int {
-	// TODO: more intelligence required
-	return cm["chunk_size"].(int)
-}
-
-func (mpc MasterPublishController) getUpdatedSleepTime(rm map[string]interface{}, cm map[string]interface{}) int {
-	// TODO: more intelligence required
-	return cm["sleep_time"].(int)
-}
-
-func getConnection(host string, user string, pwd string, db string, port int) *sql.DB {
-	// ping the database to see if it can connect
-	conn, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", user, pwd, host, port, db))
-	if err != nil {
-		glog.Fatal(err) // err is actually an interface
+	glog.V(1).Info("Tearing down all publisher instances")
+	mpc.cM.read(&queryType, &typeOfData, &currentInstances)
+	for i := 0; i < currentInstances.(int); i++ {
+		publisherStopSignal <- true
 	}
-	return conn
+}
+
+func (mpc MasterPublishController) getUpdatedChunkSize(queryType *string, rm RunMetadata, cm ControllerMetadata) int {
+	// TODO: more intelligence required
+	var chunkSize interface{}
+	typeOfData := "chunk_size"
+	cm.read(queryType, &typeOfData, &chunkSize)
+	return chunkSize.(int)
+}
+
+func (msc MasterSubscribeController) getUpdatedSleepTime(queryType *string, rm RunMetadata, cm ControllerMetadata) int {
+	// TODO: more intelligence required
+	var sleepTime interface{}
+	typeOfData := "sleep_time"
+	cm.read(queryType, &typeOfData, &sleepTime)
+	return sleepTime.(int)
+}
+
+func (msc MasterSubscribeController) getUpdatedChunkSize(queryType *string, rm RunMetadata, cm ControllerMetadata) int {
+	// TODO: more intelligence required
+	var chunkSize interface{}
+	typeOfData := "chunk_size"
+	cm.read(queryType, &typeOfData, &chunkSize)
+	return chunkSize.(int)
+}
+
+func (mpc MasterPublishController) getUpdatedSleepTime(queryType *string, rm RunMetadata, cm ControllerMetadata) int {
+	// TODO: more intelligence required
+	var sleepTime interface{}
+	typeOfData := "sleep_time"
+	cm.read(queryType, &typeOfData, &sleepTime)
+	return sleepTime.(int)
 }
 
 /*
@@ -351,37 +467,37 @@ cM: controllerMetadata consisting of instances_running, sleepTime and chunkSize
 func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, subscribeChunkSize int, db *sql.DB, expDB *sql.DB, tableSchema string, tableName string, allowMissingIndex map[string]bool, prepN int, runN int, time int, createCPM int, readCPM int, updateCPM int, deleteCPM int) {
 	var mpc MasterPublishController
 	var msc MasterSubscribeController
-	mpc.cM["instances"] = map[string]interface{}{
+	mpc.cM.instances = map[string]interface{}{
 		"create": 0,
 		"read":   0,
 		"update": 0,
 		"delete": 0,
 	}
-	mpc.cM["sleep_time"] = map[string]interface{}{
+	mpc.cM.sleepTime = map[string]interface{}{
 		"create": publishSleepTime,
 		"read":   publishSleepTime,
 		"update": publishSleepTime,
 		"delete": publishSleepTime,
 	}
-	mpc.cM["chunk_size"] = map[string]interface{}{
+	mpc.cM.chunkSize = map[string]interface{}{
 		"create": publishChunkSize,
 		"read":   publishChunkSize,
 		"update": publishChunkSize,
 		"delete": publishChunkSize,
 	}
-	msc.cM["instances"] = map[string]interface{}{
+	msc.cM.instances = map[string]interface{}{
 		"create": 0,
 		"read":   0,
 		"update": 0,
 		"delete": 0,
 	}
-	msc.cM["sleep_time"] = map[string]interface{}{
+	msc.cM.sleepTime = map[string]interface{}{
 		"create": subscribeSleepTime,
 		"read":   subscribeSleepTime,
 		"update": subscribeSleepTime,
 		"delete": subscribeSleepTime,
 	}
-	msc.cM["chunk_size"] = map[string]interface{}{
+	msc.cM.chunkSize = map[string]interface{}{
 		"create": subscribeChunkSize,
 		"read":   subscribeChunkSize,
 		"update": subscribeChunkSize,
@@ -436,33 +552,33 @@ func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, sub
 	} else {
 		startID, count = getRunChunk(db, tableName, prepN, 0)
 	}
-	var desiredMetadata map[string]interface{}
-	var runMetadata map[string]interface{}
-	desiredMetadata["CPM"] = map[string]interface{}{
+	var desiredMetadata DesiredMetadata
+	var runMetadata RunMetadata
+	desiredMetadata.cpm = map[string]interface{}{
 		"create": createCPM,
 		"read":   readCPM,
 		"update": updateCPM,
 		"delete": deleteCPM,
 	}
-	desiredMetadata["wT"] = map[string]interface{}{
+	desiredMetadata.wT = map[string]interface{}{
 		"create": (60 / createCPM) * 1000,
 		"read":   (60 / readCPM) * 1000,
 		"update": (60 / updateCPM) * 1000,
 		"delete": (60 / deleteCPM) * 1000,
 	}
-	runMetadata["CPM"] = map[string]interface{}{
+	runMetadata.cpm = map[string]interface{}{
 		"create": 0,
 		"read":   0,
 		"update": 0,
 		"delete": 0,
 	}
-	runMetadata["wT"] = map[string]interface{}{
+	runMetadata.wT = map[string]interface{}{
 		"create": 0,
 		"read":   0,
 		"update": 0,
 		"delete": 0,
 	}
-	glog.V(2).Infof("Starting publishers")
+	glog.V(1).Infof("Starting publishers and subscribers")
 	var wg *sync.WaitGroup
 	var busEmpty chan string
 	var bus chan *sql.Rows
@@ -472,8 +588,9 @@ func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, sub
 	go msc.run("read", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, wg)
 	go msc.run("update", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, wg)
 	go msc.run("delete", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, wg)
-	glog.V(0).Info("Waiting for all routines to finish")
+	glog.V(1).Info("Waiting for MasterPublishController and MasterSubscribeController to finish")
 	wg.Wait()
+
 }
 
 func prepare(db *sql.DB, expDb *sql.DB, table string, prepN int, prepareChunkSize int, insertCommitsAfter int) {
@@ -482,6 +599,15 @@ func prepare(db *sql.DB, expDb *sql.DB, table string, prepN int, prepareChunkSiz
 	*/
 	glog.V(2).Infof("prepN has been set as %d", prepN)
 	chunkCopyDataTempTable(db, expDb, table, prepN, prepareChunkSize, insertCommitsAfter)
+}
+
+func getConnection(host string, user string, pwd string, db string, port int) *sql.DB {
+	// ping the database to see if it can connect
+	conn, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", user, pwd, host, port, db))
+	if err != nil {
+		glog.Fatal(err) // err is actually an interface
+	}
+	return conn
 }
 
 func main() {
