@@ -112,23 +112,25 @@ func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus ch
 
 	source := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(source)
-	// timeNow := time.Now()
-	// if int(math.Round(timeNow.Sub(*startTime).Minutes())) > timeToRun {
-	// 	break
-	// }
+	var data interface{}
+	queryType := "read"
+	chunkSizeType := "chunk_size"
+	sleepTimeType := "sleep_time"
 	for {
 		select {
 		case <-stopSignal:
 			break
 		default:
 			offset := r.Intn(*count)
-			rows, err := mpc.db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", mpc.tableName, startID, mpc.cM["chunk_size"].(map[string]interface{})["select"].(int), offset))
+			mpc.cM.read(&queryType, &chunkSizeType, &data)
+			rows, err := mpc.db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", *(mpc.tableName), startID, data.(int), offset))
 			if err != nil {
 				glog.Info(err)
 				return
 			}
 			bus <- rows
-			time.Sleep(time.Duration(mpc.cM["sleep_time"].(map[string]interface{})["select"].(int)) * time.Millisecond)
+			mpc.cM.read(&queryType, &sleepTimeType, &data)
+			time.Sleep(time.Duration(data.(int)) * time.Millisecond)
 		}
 	}
 }
@@ -237,6 +239,9 @@ queryTypeCPM: map storing the CPM values for each query. The type of query to be
 func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Rows, indexedCols map[string]bool, allowMissingIndex map[string]bool, qWT chan int, busEmpty chan string, stopSignal chan bool) {
 	var r *sql.Rows
 	var q Query
+	chunkSizeType := "chunk_size"
+	sleepTimeType := "sleep_time"
+	var data interface{}
 	for {
 		select {
 		case <-stopSignal:
@@ -259,18 +264,19 @@ func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Ro
 					val := columnPointers[i].(*interface{})
 					colData[colName] = *val
 				}
-				query := getQuery(queryType, msc.tableName, msc.cM["chunk_size"].(map[string]interface{})[*queryType].(int), colData, indexedCols, allowMissingIndex)
+				msc.cM.read(queryType, &chunkSizeType, &data)
+				query := getQuery(queryType, msc.tableName, data.(int), colData, indexedCols, allowMissingIndex)
 				if *queryType == "select" {
 					q.query = query
 					q.executeRead(msc.db)
 					qWT <- q.wt
-					time.Sleep(time.Millisecond * time.Duration(msc.cM["sleep_time"].(map[string]interface{})[*queryType].(int)))
 				} else {
 					q.query = query
 					q.executeWrite(msc.db)
 					qWT <- q.wt
-					time.Sleep(time.Millisecond * time.Duration(msc.cM["sleep_time"].(map[string]interface{})[*queryType].(int)))
 				}
+				msc.cM.read(queryType, &sleepTimeType, &data)
+				time.Sleep(time.Millisecond * time.Duration(data.(int)))
 			}
 		default:
 			// bus should never be empty
