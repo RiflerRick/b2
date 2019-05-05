@@ -86,7 +86,7 @@ type Metadata interface {
 	write(queryType *string, typeOfData *string, data interface{})
 }
 
-// mutex cannot obviously be part of
+// mutex cannot obviously be part of the resource being shared
 // TODO: add individual mutexes in the run(...) method
 var dmCPMMutex map[string]*sync.RWMutex
 var dmWTMutex map[string]*sync.RWMutex
