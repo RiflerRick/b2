@@ -705,9 +705,9 @@ func main() {
 		var prepN int
 		if approxTableSize == 0 {
 			glog.V(0).Info("APPROX_TABLE_SIZE has not been provided. Falling back to count rows from table")
-			glog.V(0).Infof("Executing: SELECT COUNT(1) FROM %s", table)
+			glog.V(0).Infof("Executing: SELECT COUNT(1) FROM %s", *table)
 			var count int
-			err := conn.QueryRow(fmt.Sprintf("SELECT COUNT(1) FROM %s", table)).Scan(&count)
+			err := conn.QueryRow(fmt.Sprintf("SELECT COUNT(1) FROM %s", *table)).Scan(&count)
 			if err != nil {
 				glog.Fatal(err)
 			}
@@ -725,9 +725,9 @@ func main() {
 		var runN int
 		if approxTableSize == 0 {
 			glog.V(0).Info("APPROX_TABLE_SIZE has not been provided. Falling back to count rows from table")
-			glog.V(0).Infof("Executing: SELECT COUNT(1) FROM %s", table)
+			glog.V(0).Infof("Executing: SELECT COUNT(1) FROM %s", *table)
 			var count int
-			err := conn.QueryRow(fmt.Sprintf("SELECT COUNT(1) FROM %s", table)).Scan(&count)
+			err := conn.QueryRow(fmt.Sprintf("SELECT COUNT(1) FROM %s", *table)).Scan(&count)
 			if err != nil {
 				glog.Fatal(err)
 			}
