@@ -7,10 +7,10 @@ import (
 )
 
 func (m DesiredMetadata) read(queryType *string, typeOfData *string, data *interface{}) {
-	var mutex sync.RWMutex
+	var mutex *sync.RWMutex
 	if *typeOfData == "cpm" {
 		mutex = dmCPMMutex[*queryType]
-		glog.V(4).Info("Acquiring read lock for cpm for queryType: %s", *queryType)
+		glog.V(4).Infof("Acquiring read lock for cpm for queryType: %s", *queryType)
 		mutex.RLock()
 		d := m.cpm[*queryType].(interface{})
 		data = &d
@@ -27,10 +27,10 @@ func (m DesiredMetadata) read(queryType *string, typeOfData *string, data *inter
 }
 
 func (m DesiredMetadata) write(queryType *string, typeOfData *string, data interface{}) {
-	var mutex sync.RWMutex
+	var mutex *sync.RWMutex
 	if *typeOfData == "cpm" {
 		mutex = dmCPMMutex[*queryType]
-		glog.V(4).Info("Acquiring lock for cpm for queryType: %s", *queryType)
+		glog.V(4).Infof("Acquiring lock for cpm for queryType: %s", *queryType)
 		mutex.Lock()
 		m.cpm[*queryType] = data
 	} else if *typeOfData == "wT" {
@@ -44,10 +44,10 @@ func (m DesiredMetadata) write(queryType *string, typeOfData *string, data inter
 }
 
 func (m RunMetadata) read(queryType *string, typeOfData *string, data *interface{}) {
-	var mutex sync.RWMutex
+	var mutex *sync.RWMutex
 	if *typeOfData == "cpm" {
 		mutex = rmCPMMutex[*queryType]
-		glog.V(4).Info("Acquiring read lock for cpm for queryType: %s", *queryType)
+		glog.V(4).Infof("Acquiring read lock for cpm for queryType: %s", *queryType)
 		mutex.RLock()
 		d := m.cpm[*queryType].(interface{})
 		data = &d
@@ -64,10 +64,10 @@ func (m RunMetadata) read(queryType *string, typeOfData *string, data *interface
 }
 
 func (m RunMetadata) write(queryType *string, typeOfData *string, data interface{}) {
-	var mutex sync.RWMutex
+	var mutex *sync.RWMutex
 	if *typeOfData == "cpm" {
 		mutex = rmCPMMutex[*queryType]
-		glog.V(4).Info("Acquiring lock for cpm for queryType: %s", *queryType)
+		glog.V(4).Infof("Acquiring lock for cpm for queryType: %s", *queryType)
 		mutex.Lock()
 		m.cpm[*queryType] = data
 	} else if *typeOfData == "wT" {
@@ -81,10 +81,10 @@ func (m RunMetadata) write(queryType *string, typeOfData *string, data interface
 }
 
 func (m ControllerMetadata) read(queryType *string, typeOfData *string, data *interface{}) {
-	var mutex sync.RWMutex
+	var mutex *sync.RWMutex
 	if *typeOfData == "instances" {
 		mutex = cmInstancesMutex[*queryType]
-		glog.V(4).Info("Acquiring read lock for instances for queryType: %s", *queryType)
+		glog.V(4).Infof("Acquiring read lock for instances for queryType: %s", *queryType)
 		mutex.RLock()
 		d := m.instances[*queryType].(interface{})
 		data = &d
@@ -108,10 +108,10 @@ func (m ControllerMetadata) read(queryType *string, typeOfData *string, data *in
 }
 
 func (m ControllerMetadata) write(queryType *string, typeOfData *string, data interface{}) {
-	var mutex sync.RWMutex
+	var mutex *sync.RWMutex
 	if *typeOfData == "instances" {
 		mutex = cmInstancesMutex[*queryType]
-		glog.V(4).Info("Acquiring lock for instances for queryType: %s", *queryType)
+		glog.V(4).Infof("Acquiring lock for instances for queryType: %s", *queryType)
 		mutex.Lock()
 		m.instances[*queryType] = data
 	} else if *typeOfData == "chunk_size" {

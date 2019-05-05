@@ -88,15 +88,15 @@ type Metadata interface {
 
 // mutex cannot obviously be part of
 // TODO: add individual mutexes in the run(...) method
-var dmCPMMutex map[string]sync.RWMutex
-var dmWTMutex map[string]sync.RWMutex
+var dmCPMMutex map[string]*sync.RWMutex
+var dmWTMutex map[string]*sync.RWMutex
 
-var rmCPMMutex map[string]sync.RWMutex
-var rmWTMutex map[string]sync.RWMutex
+var rmCPMMutex map[string]*sync.RWMutex
+var rmWTMutex map[string]*sync.RWMutex
 
-var cmInstancesMutex map[string]sync.RWMutex
-var cmSleepTimeMutex map[string]sync.RWMutex
-var cmChunkSizeMutex map[string]sync.RWMutex
+var cmInstancesMutex map[string]*sync.RWMutex
+var cmSleepTimeMutex map[string]*sync.RWMutex
+var cmChunkSizeMutex map[string]*sync.RWMutex
 
 /*
 DesiredMetadata will never change. contains calls per minute and wait time
@@ -325,18 +325,18 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 	subscribeDontCare := false
 	var canUpscale bool
 	var canDownscale bool
-	var subscriberStopSignal chan bool
-	var createQWT chan int
-	var readQWT chan int
-	var updateQWT chan int
-	var deleteQWT chan int
+	subscriberStopSignal := make(chan bool)
+	createQWT := make(chan int)
+	readQWT := make(chan int)
+	updateQWT := make(chan int)
+	deleteQWT := make(chan int)
 	qWT := map[string]interface{}{
 		"create": createQWT,
 		"read":   readQWT,
 		"update": updateQWT,
 		"delete": deleteQWT,
 	}
-	var stopMetricCompute chan bool
+	stopMetricCompute := make(chan bool)
 	glog.V(1).Info("Spawning all computeMetrics rountines")
 	go computeMetrics("create", rM, qWT, stopMetricCompute)
 	go computeMetrics("read", rM, qWT, stopMetricCompute)
@@ -384,7 +384,7 @@ func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM 
 	publishDontCare := false
 	var canUpscale bool
 	var canDownscale bool
-	var publisherStopSignal chan bool
+	publisherStopSignal := make(chan bool)
 	startTime := time.Now()
 	var currentInstances interface{}
 	typeOfData := "instances"
@@ -580,8 +580,8 @@ func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, sub
 	}
 	glog.V(1).Infof("Starting publishers and subscribers")
 	var wg *sync.WaitGroup
-	var busEmpty chan string
-	var bus chan *sql.Rows
+	busEmpty := make(chan string)
+	bus := make(chan *sql.Rows)
 	wg.Add(5)
 	go mpc.run("select", desiredMetadata, runMetadata, time, bus, busEmpty, wg, startID, count)
 	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, wg)
