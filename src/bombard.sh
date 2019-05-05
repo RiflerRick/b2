@@ -1,5 +1,5 @@
 #!/bin/bash
-./bombard \
+../bin/bombard \
     -v=2 \
     -stderrthreshold=INFO \
     --host localhost \
