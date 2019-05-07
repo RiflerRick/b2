@@ -71,3 +71,7 @@ From the CPM for each query type it is possible to get the average wait time for
 If `y` > `x`, the `MasterSubscribeController` will issue a signal through the `stopSignal` channel. This will stop any one go routine.
 
 **NOTE: In either the publisher or subscriber, incase of a conflict, downscaling will get the priority**
+
+TODOs:
+- metadata controller locking must be removed instead use channels(message passing always wins over locking)
+- bulk ops at run phase
