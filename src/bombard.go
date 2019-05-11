@@ -87,7 +87,43 @@ type Metadata interface {
 }
 
 // mutex cannot obviously be part of the resource being shared
-// TODO: add individual mutexes in the run(...) method
+// TODO: instead of declaring variables of type sync.RWMutex, there must be a better way to do this
+
+var createDMCPMMutex sync.RWMutex
+var readDMCPMMutex sync.RWMutex
+var updateDMCPMMutex sync.RWMutex
+var deleteDMCPMMutex sync.RWMutex
+
+var createDMWTMutex sync.RWMutex
+var readDMWTMutex sync.RWMutex
+var updateDMWTMutex sync.RWMutex
+var deleteDMWTMutex sync.RWMutex
+
+var createRMCPMMutex sync.RWMutex
+var readRMCPMMutex sync.RWMutex
+var updateRMCPMMutex sync.RWMutex
+var deleteRMCPMMutex sync.RWMutex
+
+var createRMWTMutex sync.RWMutex
+var readRMWTMutex sync.RWMutex
+var updateRMWTMutex sync.RWMutex
+var deleteRMWTMutex sync.RWMutex
+
+var createCMInstancesMutex sync.RWMutex
+var readCMInstancesMutex sync.RWMutex
+var updateCMInstancesMutex sync.RWMutex
+var deleteCMInstancesMutex sync.RWMutex
+
+var createCMSleepMutex sync.RWMutex
+var readCMSleepMutex sync.RWMutex
+var updateCMSleepMutex sync.RWMutex
+var deleteCMSleepMutex sync.RWMutex
+
+var createCMChunkMutex sync.RWMutex
+var readCMChunkMutex sync.RWMutex
+var updateCMChunkMutex sync.RWMutex
+var deleteCMChunkMutex sync.RWMutex
+
 var dmCPMMutex map[string]*sync.RWMutex
 var dmWTMutex map[string]*sync.RWMutex
 
@@ -465,6 +501,41 @@ rM: runMetadata consisting of CPM, wT (actual)
 cM: controllerMetadata consisting of instances_running, sleepTime and chunkSize
 */
 func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, subscribeChunkSize int, db *sql.DB, expDB *sql.DB, tableSchema string, tableName string, allowMissingIndex map[string]bool, prepN int, runN int, time int, createCPM int, readCPM int, updateCPM int, deleteCPM int) {
+	cmInstancesMutex["create"] = &createCMInstancesMutex
+	cmInstancesMutex["read"] = &readCMInstancesMutex
+	cmInstancesMutex["update"] = &updateCMInstancesMutex
+	cmInstancesMutex["delete"] = &deleteCMInstancesMutex
+
+	cmChunkSizeMutex["create"] = &createCMChunkMutex
+	cmChunkSizeMutex["read"] = &readCMChunkMutex
+	cmChunkSizeMutex["update"] = &updateCMChunkMutex
+	cmChunkSizeMutex["delete"] = &deleteCMChunkMutex
+
+	cmSleepTimeMutex["create"] = &createCMSleepMutex
+	cmSleepTimeMutex["read"] = &readCMSleepMutex
+	cmSleepTimeMutex["update"] = &updateCMSleepMutex
+	cmSleepTimeMutex["delete"] = &deleteCMSleepMutex
+
+	dmCPMMutex["create"] = &createDMCPMMutex
+	dmCPMMutex["read"] = &readDMCPMMutex
+	dmCPMMutex["update"] = &updateDMCPMMutex
+	dmCPMMutex["delete"] = &deleteDMCPMMutex
+
+	dmWTMutex["create"] = &createDMWTMutex
+	dmWTMutex["read"] = &readDMWTMutex
+	dmWTMutex["update"] = &updateDMWTMutex
+	dmWTMutex["delete"] = &deleteDMWTMutex
+
+	rmCPMMutex["create"] = &createRMCPMMutex
+	rmCPMMutex["read"] = &readRMCPMMutex
+	rmCPMMutex["update"] = &updateRMCPMMutex
+	rmCPMMutex["delete"] = &deleteRMCPMMutex
+
+	rmWTMutex["create"] = &createRMWTMutex
+	rmWTMutex["read"] = &readRMWTMutex
+	rmWTMutex["update"] = &updateRMWTMutex
+	rmWTMutex["delete"] = &deleteRMWTMutex
+
 	var mpc MasterPublishController
 	var msc MasterSubscribeController
 	mpc.cM.instances = map[string]interface{}{
