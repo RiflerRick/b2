@@ -56,23 +56,6 @@ func (e dbError) Error() string {
 }
 
 /*
-Query defines the query itself, along with wait_time in milliseconds and error in int
-*/
-type Query struct {
-	query     string
-	queryType string
-	wt        int
-}
-
-/*
-Transactions for db transactions
-*/
-type Transaction struct {
-	transaction *sql.Tx
-	wt          int
-}
-
-/*
 dM: desiredMetadata consisting of CPM, wT //this never changes
 rM: runMetadata consisting of CPM, wT (actual)
 cM: controllerMetadata consisting of instances_running, sleepTime and chunkSize
@@ -178,87 +161,6 @@ type MasterSubscribeController struct {
 	cM        ControllerMetadata
 	tableName *string
 	db        *sql.DB
-}
-
-func (q Query) executeRead(db *sql.DB) *sql.Rows {
-	st := time.Now()
-	rows, err := db.Query(q.query)
-	et := time.Now()
-	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
-	if err != nil {
-		glog.Fatal(err)
-	}
-	// as long as there is an open result set(represented by rows), the underlying connection is busy and can't be used for any other query
-	// That means it is not available in the connection pool. If you iterate over all the rows with rows.Next(), eventually you'll read the last row and rows.Next()
-	// will encounter an internal EOF call and call rows.Close(). But if for some reason rows.Close() is not called and we exit the function, not defering rows.Close()
-	// can become a potential source of memory leak in that case. In case of an error however rows.Close() is called internally
-	return rows
-}
-
-func (q Query) executeReadRow(db *sql.DB) *sql.Row {
-	st := time.Now()
-	row := db.QueryRow(q.query)
-	et := time.Now()
-	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
-	return row
-}
-
-func (q Query) executeReadAsync(db *sql.DB, rowChan chan *sql.Rows) {
-	st := time.Now()
-	rows, err := db.Query(q.query)
-	et := time.Now()
-	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
-	if err != nil {
-		glog.Info(err)
-		return
-	}
-	rowChan <- rows
-}
-
-func (q Query) executeReadRowAsync(db *sql.DB, rowChan chan *sql.Row) {
-	st := time.Now()
-	row := db.QueryRow(q.query)
-	et := time.Now()
-	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
-	rowChan <- row
-}
-
-func (q Query) executeWrite(db *sql.DB) {
-	st := time.Now()
-	_, err := db.Exec(q.query)
-	et := time.Now()
-	if err != nil {
-		glog.Fatal(err)
-	}
-	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
-}
-
-func (t Transaction) commit() {
-	st := time.Now()
-	err := t.transaction.Commit()
-	if err != nil {
-		glog.Fatal(err)
-	}
-	et := time.Now()
-	t.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
-}
-
-func (t Transaction) executeVariadic(query string, data ...interface{}) {
-	_, err := t.transaction.Exec(query, data...)
-	if err != nil {
-		glog.Fatal(err)
-	}
-}
-
-func (q Query) executeWriteAsync(db *sql.DB) {
-	st := time.Now()
-	_, err := db.Exec(q.query)
-	et := time.Now()
-	if err != nil {
-		glog.Info(err)
-		return
-	}
-	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
 }
 
 func (mpc MasterPublishController) upscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
@@ -501,40 +403,54 @@ rM: runMetadata consisting of CPM, wT (actual)
 cM: controllerMetadata consisting of instances_running, sleepTime and chunkSize
 */
 func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, subscribeChunkSize int, db *sql.DB, expDB *sql.DB, tableSchema string, tableName string, allowMissingIndex map[string]bool, prepN int, runN int, time int, createCPM int, readCPM int, updateCPM int, deleteCPM int) {
-	cmInstancesMutex["create"] = &createCMInstancesMutex
-	cmInstancesMutex["read"] = &readCMInstancesMutex
-	cmInstancesMutex["update"] = &updateCMInstancesMutex
-	cmInstancesMutex["delete"] = &deleteCMInstancesMutex
+	cmInstancesMutex = map[string]*sync.RWMutex{
+		"create": &createCMInstancesMutex,
+		"read":   &readCMInstancesMutex,
+		"update": &updateCMInstancesMutex,
+		"delete": &deleteCMInstancesMutex,
+	}
 
-	cmChunkSizeMutex["create"] = &createCMChunkMutex
-	cmChunkSizeMutex["read"] = &readCMChunkMutex
-	cmChunkSizeMutex["update"] = &updateCMChunkMutex
-	cmChunkSizeMutex["delete"] = &deleteCMChunkMutex
+	cmChunkSizeMutex = map[string]*sync.RWMutex{
+		"create": &createCMChunkMutex,
+		"read":   &readCMChunkMutex,
+		"update": &updateCMChunkMutex,
+		"delete": &deleteCMChunkMutex,
+	}
 
-	cmSleepTimeMutex["create"] = &createCMSleepMutex
-	cmSleepTimeMutex["read"] = &readCMSleepMutex
-	cmSleepTimeMutex["update"] = &updateCMSleepMutex
-	cmSleepTimeMutex["delete"] = &deleteCMSleepMutex
+	cmSleepTimeMutex = map[string]*sync.RWMutex{
+		"create": &createCMSleepMutex,
+		"read":   &readCMSleepMutex,
+		"update": &updateCMSleepMutex,
+		"delete": &deleteCMSleepMutex,
+	}
 
-	dmCPMMutex["create"] = &createDMCPMMutex
-	dmCPMMutex["read"] = &readDMCPMMutex
-	dmCPMMutex["update"] = &updateDMCPMMutex
-	dmCPMMutex["delete"] = &deleteDMCPMMutex
+	dmCPMMutex = map[string]*sync.RWMutex{
+		"create": &createDMCPMMutex,
+		"read":   &readDMCPMMutex,
+		"update": &updateDMCPMMutex,
+		"delete": &deleteDMCPMMutex,
+	}
 
-	dmWTMutex["create"] = &createDMWTMutex
-	dmWTMutex["read"] = &readDMWTMutex
-	dmWTMutex["update"] = &updateDMWTMutex
-	dmWTMutex["delete"] = &deleteDMWTMutex
+	dmWTMutex = map[string]*sync.RWMutex{
+		"create": &createDMWTMutex,
+		"read":   &readDMWTMutex,
+		"update": &updateDMWTMutex,
+		"delete": &deleteDMWTMutex,
+	}
 
-	rmCPMMutex["create"] = &createRMCPMMutex
-	rmCPMMutex["read"] = &readRMCPMMutex
-	rmCPMMutex["update"] = &updateRMCPMMutex
-	rmCPMMutex["delete"] = &deleteRMCPMMutex
+	rmCPMMutex = map[string]*sync.RWMutex{
+		"create": &createRMCPMMutex,
+		"read":   &readRMCPMMutex,
+		"update": &updateRMCPMMutex,
+		"delete": &deleteRMCPMMutex,
+	}
 
-	rmWTMutex["create"] = &createRMWTMutex
-	rmWTMutex["read"] = &readRMWTMutex
-	rmWTMutex["update"] = &updateRMWTMutex
-	rmWTMutex["delete"] = &deleteRMWTMutex
+	rmWTMutex = map[string]*sync.RWMutex{
+		"create": &createRMWTMutex,
+		"read":   &readRMWTMutex,
+		"update": &updateRMWTMutex,
+		"delete": &deleteRMWTMutex,
+	}
 
 	var mpc MasterPublishController
 	var msc MasterSubscribeController
@@ -580,8 +496,7 @@ func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, sub
 	var indexedColumns []string
 	var indexedColumnName string
 	var columnName string
-	query := fmt.Sprintf("select column_name from information_schema.statistics where table_schema=%s and table_name=%s and index_name != PRIMARY", tableSchema, tableName)
-	indices, err := db.Query(query)
+	indices, err := db.Query("select column_name from information_schema.statistics where table_schema=? and table_name=? and index_name != ?", tableSchema, tableName, "PRIMARY")
 	if err != nil {
 		glog.Fatal(err)
 	}
@@ -593,8 +508,7 @@ func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, sub
 		}
 		indexedColumns = append(indexedColumns, indexedColumnName)
 	}
-	query = fmt.Sprintf("select column_name from information_schema.columns where table_schema=%s and table_name=%s", tableSchema, tableName)
-	columns, err := db.Query(query)
+	columns, err := db.Query("select column_name from information_schema.columns where table_schema=? and table_name=?", tableSchema, tableName)
 	if err != nil {
 		glog.Fatal(err)
 	}
@@ -610,9 +524,8 @@ func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, sub
 			indexedColumnsMap[columnName] = false
 		}
 	}
-	query = fmt.Sprintf("select count(1) from information_schema.table_constraints where table_schema=%s and table_name=%s and constraint_type=UNIQUE", tableSchema, tableName)
 	var hasConstraints int
-	err = db.QueryRow(query).Scan(&hasConstraints)
+	err = db.QueryRow("select count(1) from information_schema.table_constraints where table_schema=? and table_name=? and constraint_type=?", tableSchema, tableName, "UNIQUE").Scan(&hasConstraints)
 	if err != nil {
 		glog.Fatal(err)
 	}
@@ -814,8 +727,6 @@ func main() {
 			glog.V(2).Infof("preN: %d", prepN)
 			glog.V(2).Infof("runN: %d", runN)
 		}
-
-		panic("pause") // TODO: remove this after checking prepN and runN
 		allowMissingIndex := map[string]bool{
 			"read":   *allowMissingIndexRead,
 			"update": *allowMissingIndexUpdate,

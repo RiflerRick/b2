@@ -100,7 +100,7 @@ func getRunChunk(db *sql.DB, table string, runN int, prepN int) (int, int) {
 	if err != nil {
 		glog.Fatal(err)
 	}
-	err = db.QueryRow(fmt.Sprintf("SELECT COUNT(1) FROM %s WHERE id >= %d and i < %d", table, startID, endID)).Scan(&count)
+	err = db.QueryRow(fmt.Sprintf("SELECT COUNT(1) FROM %s WHERE id >= %d and id < %d", table, startID, endID)).Scan(&count)
 	return startID, count
 }
 
@@ -146,10 +146,14 @@ func getSubset(colSelect map[string]bool) {
 
 }
 
-func getQuery(queryType *string, tableName *string, writeChunkSize int, colData map[string]interface{}, indexedCols map[string]bool, allowMissingIndex map[string]bool) string {
+func getQuery(queryType *string, tableName *string, writeChunkSize int, colData map[string]interface{}, indexedCols map[string]bool, allowMissingIndex map[string]bool) (string, []interface{}) {
+	/*
+		returns the normalized query and the data in a slice
+	*/
 
 	var query string
 	var colSelect map[string]bool
+	var data []interface{}
 	for k := range colData {
 		colSelect[k] = false
 	}
@@ -160,11 +164,13 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 			for k, v := range colData {
 				if allowMissingIndex["read"] {
 					if colSelect[k] {
-						baseQuery += fmt.Sprintf("%s = %s and ", k, v)
+						baseQuery += fmt.Sprintf("%s = ? and ", k)
+						data = append(data, v.(string))
 					}
 				} else {
 					if colSelect[k] && indexedCols[k] {
-						baseQuery += fmt.Sprintf("%s = %s and ", k, v)
+						baseQuery += fmt.Sprintf("%s = ? and ", k)
+						data = append(data, v.(string))
 					}
 				}
 			}
@@ -174,7 +180,9 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 		} else if *queryType == "create" {
 			baseQuery := fmt.Sprintf("INSERT INTO %s VALUES (", *tableName)
 			for _, v := range colData {
-				baseQuery += fmt.Sprintf("%s, ", v)
+				baseQuery += fmt.Sprintf("?, ")
+				data = append(data, v.(string))
+
 			}
 			baseQuery = strings.TrimSuffix(baseQuery, ",")
 			baseQuery += fmt.Sprintf(")")
@@ -186,11 +194,13 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 			for k, v := range colData {
 				if allowMissingIndex["update"] {
 					if colSelect[k] {
-						baseQuery += fmt.Sprintf("%s = %s,", k, v)
+						baseQuery += fmt.Sprintf("%s = ?,", k)
+						data = append(data, v.(string))
 					}
 				} else {
 					if colSelect[k] && indexedCols[k] {
-						baseQuery += fmt.Sprintf("%s = %s,", k, v)
+						baseQuery += fmt.Sprintf("%s = ?,", k)
+						data = append(data, v.(string))
 					}
 				}
 			}
@@ -199,11 +209,13 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 			for k, v := range colData {
 				if allowMissingIndex["update"] {
 					if colSelect[k] {
-						baseQuery += fmt.Sprintf("%s = %s and ", k, v)
+						baseQuery += fmt.Sprintf("%s = ? and ", k)
+						data = append(data, v.(string))
 					}
 				} else {
 					if colSelect[k] && indexedCols[k] {
-						baseQuery += fmt.Sprintf("%s = %s and ", k, v)
+						baseQuery += fmt.Sprintf("%s = ? and ", k)
+						data = append(data, v.(string))
 					}
 				}
 			}
@@ -216,11 +228,13 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 			for k, v := range colData {
 				if allowMissingIndex["read"] {
 					if colSelect[k] {
-						baseQuery += fmt.Sprintf("%s = %s and ", k, v)
+						baseQuery += fmt.Sprintf("%s = ? and ", k)
+						data = append(data, v.(string))
 					}
 				} else {
 					if colSelect[k] && indexedCols[k] {
-						baseQuery += fmt.Sprintf("%s = %s and ", k, v)
+						baseQuery += fmt.Sprintf("%s = ? and ", k)
+						data = append(data, v.(string))
 					}
 				}
 			}
@@ -229,7 +243,7 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 			break
 		}
 	}
-	return query
+	return query, data
 }
 
 /*
@@ -265,14 +279,14 @@ func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Ro
 					colData[colName] = *val
 				}
 				msc.cM.read(queryType, &chunkSizeType, &data)
-				query := getQuery(queryType, msc.tableName, data.(int), colData, indexedCols, allowMissingIndex)
+				query, columnData := getQuery(queryType, msc.tableName, data.(int), colData, indexedCols, allowMissingIndex)
 				if *queryType == "select" {
 					q.query = query
-					q.executeRead(msc.db)
+					q.executeRead(msc.db, columnData...)
 					qWT <- q.wt
 				} else {
 					q.query = query
-					q.executeWrite(msc.db)
+					q.executeWrite(msc.db, columnData...)
 					qWT <- q.wt
 				}
 				msc.cM.read(queryType, &sleepTimeType, &data)
@@ -353,14 +367,14 @@ func writeRowsToTempTable(expDb *sql.DB, tempTableName string, rows *sql.Rows, w
 		}
 		if rowsFetched%insertCommitsAfter == 0 {
 			baseQuery = strings.TrimSuffix(baseQuery, ",")
-			tx.executeVariadic(baseQuery, colData...)
+			tx.execute(baseQuery, colData...)
 			tx.commit()
 			startTrx = true
 		}
 	}
 	if rowsFetched%insertCommitsAfter != 0 {
 		baseQuery = strings.TrimSuffix(baseQuery, ",")
-		tx.executeVariadic(baseQuery, colData...) // to handle the last bit
+		tx.execute(baseQuery, colData...) // to handle the last bit
 		tx.commit()
 	}
 }
