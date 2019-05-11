@@ -13,13 +13,13 @@ func (m DesiredMetadata) read(queryType *string, typeOfData *string, data *inter
 		glog.V(4).Infof("Acquiring read lock for cpm for queryType: %s", *queryType)
 		mutex.RLock()
 		d := m.cpm[*queryType].(interface{})
-		data = &d
+		*data = d
 	} else if *typeOfData == "wT" {
 		mutex = dmWTMutex[*queryType]
 		glog.V(4).Infof("Acquiring read lock for wT for queryType: %s", *queryType)
 		mutex.RLock()
 		d := m.wT[*queryType].(interface{})
-		data = &d
+		*data = d
 	}
 	glog.V(4).Infof("Releasing read lock for %s for queryType: %s", *typeOfData, *queryType)
 	mutex.RUnlock()
@@ -50,13 +50,13 @@ func (m RunMetadata) read(queryType *string, typeOfData *string, data *interface
 		glog.V(4).Infof("Acquiring read lock for cpm for queryType: %s", *queryType)
 		mutex.RLock()
 		d := m.cpm[*queryType].(interface{})
-		data = &d
+		*data = d
 	} else if *typeOfData == "wT" {
 		mutex = rmWTMutex[*queryType]
 		glog.V(4).Infof("Acquiring read lock for wT for queryType: %s", *queryType)
 		mutex.RLock()
 		d := m.wT[*queryType].(interface{})
-		data = &d
+		*data = d
 	}
 	glog.V(4).Infof("Releasing read lock for %s for queryType: %s", *typeOfData, *queryType)
 	mutex.RUnlock()
@@ -87,19 +87,19 @@ func (m ControllerMetadata) read(queryType *string, typeOfData *string, data *in
 		glog.V(4).Infof("Acquiring read lock for instances for queryType: %s", *queryType)
 		mutex.RLock()
 		d := m.instances[*queryType].(interface{})
-		data = &d
+		*data = d
 	} else if *typeOfData == "chunk_size" {
 		mutex = cmChunkSizeMutex[*queryType]
 		glog.V(4).Infof("Acquiring read lock for chunk_size for queryType: %s", *queryType)
 		mutex.RLock()
 		d := m.chunkSize[*queryType].(interface{})
-		data = &d
+		*data = d
 	} else if *typeOfData == "sleep_time" {
 		mutex = cmSleepTimeMutex[*queryType]
 		glog.V(4).Infof("Acquiring read lock for sleep_time for queryType: %s", *queryType)
 		mutex.RLock()
 		d := m.sleepTime[*queryType].(interface{})
-		data = &d
+		*data = d
 	}
 
 	glog.V(4).Infof("Releasing read lock for %s for queryType: %s", *typeOfData, *queryType)
