@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"reflect"
 	"strconv"
 	"sync"
 	"time"
@@ -220,14 +221,14 @@ func (msc MasterSubscribeController) downscale(queryType *string, dM DesiredMeta
 	dmWT, ok := avgDMWT.(int)
 	if !ok {
 		// its possible the number is infinite which is of type float64
-		if math.IsInf(avgDMWT.(float64), 1) {
+		if reflect.TypeOf(avgDMWT).String() == "float64" && math.IsInf(avgDMWT.(float64), 1) {
 			return false
 		}
 	}
 	rmWT, ok := avgRMWT.(int)
 	if !ok {
 		// its possible the number is infinite which is of type float64
-		if math.IsInf(avgRMWT.(float64), 1) {
+		if reflect.TypeOf(avgDMWT).String() == "float64" && math.IsInf(avgRMWT.(float64), 1) {
 			return true
 		}
 	}
