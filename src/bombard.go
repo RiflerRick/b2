@@ -217,10 +217,23 @@ func (msc MasterSubscribeController) downscale(queryType *string, dM DesiredMeta
 	dM.read(queryType, &wT, &avgDMWT)
 	var avgRMWT interface{}
 	rM.read(queryType, &wT, &avgRMWT)
-
+	dmWT, ok := avgDMWT.(int)
+	if !ok {
+		// its possible the number is infinite which is of type float64
+		if math.IsInf(avgDMWT.(float64), 1) {
+			return false
+		}
+	}
+	rmWT, ok := avgRMWT.(int)
+	if !ok {
+		// its possible the number is infinite which is of type float64
+		if math.IsInf(avgRMWT.(float64), 1) {
+			return true
+		}
+	}
 	// TODO: add a tolerance
 	// run wait time is greater than desired wait time
-	if avgRMWT.(int) > avgDMWT.(int) {
+	if rmWT > dmWT {
 		return true
 	}
 	return false
