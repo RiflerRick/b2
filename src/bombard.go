@@ -226,7 +226,7 @@ func (msc MasterSubscribeController) downscale(queryType *string, dM DesiredMeta
 	return false
 }
 
-func computeMetrics(queryType string, rM RunMetadata, qWT map[string]interface{}, stopSignal chan bool) {
+func computeMetrics(queryType string, rM RunMetadata, qWT chan int, stopSignal chan bool) {
 	metricVisibilityWindow := 500 // in milliseconds
 	totalQExecuted := 0
 	totalWT := 0
@@ -236,7 +236,7 @@ func computeMetrics(queryType string, rM RunMetadata, qWT map[string]interface{}
 		case <-stopSignal:
 			break
 		default:
-			totalWT += <-qWT[queryType].(chan int)
+			totalWT += <-qWT
 			timeElapsed := (time.Now()).Sub(startTime)
 			timeElapsedMin := timeElapsed.Minutes()
 			timeElapsedMil := int(timeElapsed.Seconds() * 1000)
@@ -251,35 +251,25 @@ func computeMetrics(queryType string, rM RunMetadata, qWT map[string]interface{}
 				glog.V(1).Infof("queryType: %s; CPM: %d; wT: %d ms", queryType, rMCPM.(int), rMWT.(int))
 			}
 			totalQExecuted++
+			// fmt.Printf("cpm for queryType: %s is %d", queryType, int(math.Round(float64(totalQExecuted)/timeElapsedMin)))
+			// fmt.Printf("waitTime for queryType: %s is %d", queryType, int(math.Round(float64(totalWT/totalQExecuted))))
 			rM.write(&queryType, &cpmType, int(math.Round(float64(totalQExecuted)/timeElapsedMin)))
-			rM.write(&queryType, &cpmType, int(math.Round(float64(totalWT/totalQExecuted))))
+			rM.write(&queryType, &wTType, int(math.Round(float64(totalWT/totalQExecuted))))
 		}
 	}
 }
 
-func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, busEmpty chan string, bus chan *sql.Rows, wg *sync.WaitGroup) {
+func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, busEmpty chan string, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	subscribeDontCare := false
 	var canUpscale bool
 	var canDownscale bool
 	subscriberStopSignal := make(chan bool)
-	createQWT := make(chan int)
-	readQWT := make(chan int)
-	updateQWT := make(chan int)
-	deleteQWT := make(chan int)
-	qWT := map[string]interface{}{
-		"create": createQWT,
-		"read":   readQWT,
-		"update": updateQWT,
-		"delete": deleteQWT,
-	}
+
 	stopMetricCompute := make(chan bool)
-	glog.V(1).Info("Spawning all computeMetrics rountines")
-	go computeMetrics("create", rM, qWT, stopMetricCompute)
-	go computeMetrics("read", rM, qWT, stopMetricCompute)
-	go computeMetrics("update", rM, qWT, stopMetricCompute)
-	go computeMetrics("delete", rM, qWT, stopMetricCompute)
+	glog.V(1).Infof("Spawning computeMetric routine for queryType: %s", queryType)
+	go computeMetrics(queryType, rM, qWT, stopMetricCompute)
 	startTime := time.Now()
 
 	var currentInstances interface{}
@@ -302,7 +292,7 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 			msc.cM.read(&queryType, &typeOfData, &currentInstances)
 			currentInstances = currentInstances.(int) + 1
 			msc.cM.write(&queryType, &typeOfData, &currentInstances)
-			go msc.bombard(&queryType, bus, indexedColumns, allowMissingIndex, qWT[queryType].(chan int), busEmpty, subscriberStopSignal)
+			go msc.bombard(&queryType, bus, indexedColumns, allowMissingIndex, qWT, busEmpty, subscriberStopSignal)
 		}
 	}
 	glog.V(1).Info("Tearing down all subscriber instances")
@@ -492,7 +482,7 @@ func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, sub
 	}
 
 	// get indexed columns
-	var indexedColumnsMap map[string]bool
+	indexedColumnsMap := make(map[string]bool)
 	var indexedColumns []string
 	var indexedColumnName string
 	var columnName string
@@ -568,6 +558,7 @@ func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, sub
 	} else {
 		desiredMetadata.wT["delete"] = (60 / deleteCPM) * 1000
 	}
+
 	runMetadata.cpm = map[string]interface{}{
 		"create": 0,
 		"read":   0,
@@ -580,16 +571,23 @@ func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, sub
 		"update": 0,
 		"delete": 0,
 	}
-	glog.V(1).Infof("Starting publishers and subscribers")
-	var wg *sync.WaitGroup
+	glog.V(1).Infof("Starting publishers")
+	var wg sync.WaitGroup
 	busEmpty := make(chan string)
 	bus := make(chan *sql.Rows)
 	wg.Add(5)
-	go mpc.run("select", desiredMetadata, runMetadata, time, bus, busEmpty, wg, startID, count)
-	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, wg)
-	go msc.run("read", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, wg)
-	go msc.run("update", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, wg)
-	go msc.run("delete", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, wg)
+	go mpc.run("select", desiredMetadata, runMetadata, time, bus, busEmpty, &wg, startID, count)
+
+	createQWT := make(chan int)
+	readQWT := make(chan int)
+	updateQWT := make(chan int)
+	deleteQWT := make(chan int)
+
+	glog.V(1).Info("Starting subscribers")
+	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, createQWT, &wg)
+	go msc.run("read", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, readQWT, &wg)
+	go msc.run("update", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, updateQWT, &wg)
+	go msc.run("delete", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, deleteQWT, &wg)
 	glog.V(1).Info("Waiting for MasterPublishController and MasterSubscribeController to finish")
 	wg.Wait()
 
