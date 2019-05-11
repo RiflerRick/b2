@@ -152,7 +152,7 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 	*/
 
 	var query string
-	var colSelect map[string]bool
+	colSelect := make(map[string]bool)
 	var data []interface{}
 	for k := range colData {
 		colSelect[k] = false
