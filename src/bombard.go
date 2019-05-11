@@ -544,11 +544,29 @@ func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, sub
 		"update": updateCPM,
 		"delete": deleteCPM,
 	}
-	desiredMetadata.wT = map[string]interface{}{
-		"create": (60 / createCPM) * 1000,
-		"read":   (60 / readCPM) * 1000,
-		"update": (60 / updateCPM) * 1000,
-		"delete": (60 / deleteCPM) * 1000,
+	desiredMetadata.wT = make(map[string]interface{})
+	if createCPM == 0 {
+		desiredMetadata.wT["create"] = math.Inf(1)
+	} else {
+		desiredMetadata.wT["create"] = (60 / createCPM) * 1000
+	}
+
+	if readCPM == 0 {
+		desiredMetadata.wT["read"] = math.Inf(1)
+	} else {
+		desiredMetadata.wT["read"] = (60 / readCPM) * 1000
+	}
+
+	if updateCPM == 0 {
+		desiredMetadata.wT["update"] = math.Inf(1)
+	} else {
+		desiredMetadata.wT["update"] = (60 / updateCPM) * 1000
+	}
+
+	if deleteCPM == 0 {
+		desiredMetadata.wT["delete"] = math.Inf(1)
+	} else {
+		desiredMetadata.wT["delete"] = (60 / deleteCPM) * 1000
 	}
 	runMetadata.cpm = map[string]interface{}{
 		"create": 0,
