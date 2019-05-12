@@ -76,3 +76,4 @@ TODOs:
 
 - metadata controller locking must be removed instead use channels(message passing always wins over locking)
 - bulk ops at run phase
+- support of multiple tables for joins. This can be done using go-templates. normalized queries can be provided by the user, getQuery will no longer be used to generate queries, follow (this)[https://golang.org/pkg/text/template/] for reference
