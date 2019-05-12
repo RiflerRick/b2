@@ -178,14 +178,20 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 			query = baseQuery
 			break
 		} else if *queryType == "create" {
-			baseQuery := fmt.Sprintf("INSERT INTO %s VALUES (", *tableName)
-			for _, v := range colData {
-				baseQuery += fmt.Sprintf("?, ")
+			baseQuery := fmt.Sprintf("INSERT INTO %s", *tableName)
+			var columnName string
+			var columnData string
+			for k, v := range colData {
+				if k == "id" {
+					continue
+				}
+				columnName += fmt.Sprintf("%s, ", k)
+				columnData += fmt.Sprintf("?, ")
 				data = append(data, v.(string))
-
 			}
-			baseQuery = strings.TrimSuffix(baseQuery, ",")
-			baseQuery += fmt.Sprintf(")")
+			columnName = strings.TrimSuffix(columnName, ",")
+			columnData = strings.TrimSuffix(columnData, ",")
+			baseQuery += fmt.Sprintf(" (%s) VALUES(%s)", columnName, columnData)
 			query = baseQuery
 			break
 		} else if *queryType == "update" {
