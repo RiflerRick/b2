@@ -34,6 +34,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"math/rand"
 	"os"
 	"reflect"
 	"strconv"
@@ -269,6 +270,92 @@ func computeMetrics(queryType string, rM RunMetadata, qWT chan int, stopSignal c
 			// fmt.Printf("waitTime for queryType: %s is %d", queryType, int(math.Round(float64(totalWT/totalQExecuted))))
 			rM.write(&queryType, &cpmType, int(math.Round(float64(totalQExecuted)/timeElapsedMin)))
 			rM.write(&queryType, &wTType, int(math.Round(float64(totalWT/totalQExecuted))))
+		}
+	}
+}
+
+/*
+subscribe to bus for hitting the db. sleep decides how much to sleep in between queries
+queryTypeCPM: map storing the CPM values for each query. The type of query to be fired will be chosen by this CPM
+*/
+func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Rows, indexedCols map[string]bool, allowMissingIndex map[string]bool, qWT chan int, busEmpty chan string, stopSignal chan bool) {
+	var r *sql.Rows
+	var q Query
+	chunkSizeType := "chunk_size"
+	sleepTimeType := "sleep_time"
+	var data interface{}
+	for {
+		select {
+		case <-stopSignal:
+			break
+		case r = <-bus:
+			cols, _ := r.Columns()
+			for r.Next() {
+				columns := make([]interface{}, len(cols))
+				columnPointers := make([]interface{}, len(cols))
+				for i := range columns {
+					columnPointers[i] = &columns[i]
+				}
+				err := r.Scan(columnPointers...)
+				if err != nil {
+					glog.Info(err)
+					return
+				}
+				colData := make(map[string]interface{})
+				for i, colName := range cols {
+					val := columnPointers[i].(*interface{})
+					colData[colName] = *val
+				}
+				msc.cM.read(queryType, &chunkSizeType, &data)
+				query, columnData := getQuery(queryType, msc.tableName, data.(int), colData, indexedCols, allowMissingIndex)
+				if *queryType == "select" {
+					q.query = query
+					q.executeRead(msc.db, columnData...)
+					qWT <- q.wt
+				} else {
+					q.query = query
+					q.executeWrite(msc.db, columnData...)
+					qWT <- q.wt
+				}
+				msc.cM.read(queryType, &sleepTimeType, &data)
+				time.Sleep(time.Millisecond * time.Duration(data.(int)))
+			}
+		default:
+			// bus should never be empty
+			busEmpty <- *queryType
+			break
+		}
+
+	}
+}
+
+/*
+	function to publish data to the bus after reading from the source db
+	to be called as a go routine. publishes data to the bus channel to be consumed by bombarding routines
+*/
+func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus chan *sql.Rows, stopSignal chan bool) {
+
+	source := rand.NewSource(time.Now().UnixNano())
+	r := rand.New(source)
+	var data interface{}
+	queryType := "read"
+	chunkSizeType := "chunk_size"
+	sleepTimeType := "sleep_time"
+	for {
+		select {
+		case <-stopSignal:
+			break
+		default:
+			offset := r.Intn(*count)
+			mpc.cM.read(&queryType, &chunkSizeType, &data)
+			rows, err := mpc.db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", *(mpc.tableName), startID, data.(int), offset))
+			if err != nil {
+				glog.Info(err)
+				return
+			}
+			bus <- rows
+			mpc.cM.read(&queryType, &sleepTimeType, &data)
+			time.Sleep(time.Duration(data.(int)) * time.Millisecond)
 		}
 	}
 }
