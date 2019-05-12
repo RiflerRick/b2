@@ -88,8 +88,7 @@ func (m ControllerMetadata) read(queryType *string, typeOfData *string, data *in
 		} else {
 			mutex = scmInstancesMutex[*queryType]
 		}
-
-		glog.V(4).Infof("Acquiring read lock for instances for queryType: %s", *queryType)
+		glog.V(4).Infof("Acquiring read lock for %s instances for queryType: %s", m.controllerType, *queryType)
 		mutex.RLock()
 		d := m.instances[*queryType].(interface{})
 		*data = d
@@ -99,7 +98,7 @@ func (m ControllerMetadata) read(queryType *string, typeOfData *string, data *in
 		} else {
 			mutex = scmChunkSizeMutex[*queryType]
 		}
-		glog.V(4).Infof("Acquiring read lock for chunk_size for queryType: %s", *queryType)
+		glog.V(4).Infof("Acquiring read lock for %s chunk_size for queryType: %s", m.controllerType, *queryType)
 		mutex.RLock()
 		d := m.chunkSize[*queryType].(interface{})
 		*data = d
@@ -109,13 +108,13 @@ func (m ControllerMetadata) read(queryType *string, typeOfData *string, data *in
 		} else {
 			mutex = scmSleepTimeMutex[*queryType]
 		}
-		glog.V(4).Infof("Acquiring read lock for sleep_time for queryType: %s", *queryType)
+		glog.V(4).Infof("Acquiring read lock for %s sleep_time for queryType: %s", m.controllerType, *queryType)
 		mutex.RLock()
 		d := m.sleepTime[*queryType].(interface{})
 		*data = d
 	}
 
-	glog.V(4).Infof("Releasing read lock for %s for queryType: %s", *typeOfData, *queryType)
+	glog.V(4).Infof("Releasing read lock for %s %s for queryType: %s", m.controllerType, *typeOfData, *queryType)
 	mutex.RUnlock()
 	// TODO: use of RLock needs to be revisited. The difference between Lock and RLock needs to be clearly understood
 }
@@ -128,7 +127,7 @@ func (m ControllerMetadata) write(queryType *string, typeOfData *string, data in
 		} else {
 			mutex = scmInstancesMutex[*queryType]
 		}
-		glog.V(4).Infof("Acquiring lock for instances for queryType: %s", *queryType)
+		glog.V(4).Infof("Acquiring lock for %s instances for queryType: %s", m.controllerType, *queryType)
 		mutex.Lock()
 		m.instances[*queryType] = data
 	} else if *typeOfData == "chunk_size" {
@@ -137,7 +136,7 @@ func (m ControllerMetadata) write(queryType *string, typeOfData *string, data in
 		} else {
 			mutex = scmChunkSizeMutex[*queryType]
 		}
-		glog.V(4).Infof("Acquiring lock for chunk_size for queryType: %s", *queryType)
+		glog.V(4).Infof("Acquiring lock for %s chunk_size for queryType: %s", m.controllerType, *queryType)
 		mutex.Lock()
 		m.chunkSize[*queryType] = data
 	} else if *typeOfData == "sleep_time" {
@@ -146,10 +145,10 @@ func (m ControllerMetadata) write(queryType *string, typeOfData *string, data in
 		} else {
 			mutex = scmSleepTimeMutex[*queryType]
 		}
-		glog.V(4).Infof("Acquiring lock for sleep_time for queryType: %s", *queryType)
+		glog.V(4).Infof("Acquiring lock for %s sleep_time for queryType: %s", m.controllerType, *queryType)
 		mutex.Lock()
 		m.sleepTime[*queryType] = data
 	}
-	glog.V(4).Infof("Releasing lock for %s for queryType: %s", *typeOfData, *queryType)
+	glog.V(4).Infof("Releasing lock for %s %s for queryType: %s", m.controllerType, *typeOfData, *queryType)
 	mutex.Unlock()
 }

@@ -492,13 +492,13 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 			glog.V(1).Info("downscaling subscriber instances by one")
 			msc.cM.read(&queryType, &typeOfData, &currentInstances)
 			currentInstances = currentInstances.(int) - 1
-			msc.cM.write(&queryType, &typeOfData, &currentInstances)
+			msc.cM.write(&queryType, &typeOfData, currentInstances)
 			subscriberStopSignal <- true
 		} else if canUpscale {
 			glog.V(1).Info("upscaling subscriber instances by one")
 			msc.cM.read(&queryType, &typeOfData, &currentInstances)
 			currentInstances = currentInstances.(int) + 1
-			msc.cM.write(&queryType, &typeOfData, &currentInstances)
+			msc.cM.write(&queryType, &typeOfData, currentInstances)
 			go msc.bombard(&queryType, bus, indexedColumns, allowMissingIndex, qWT, busEmpty, subscriberStopSignal)
 		}
 	}
@@ -539,13 +539,13 @@ func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM 
 				glog.V(1).Info("downscaling publisher instances by 1")
 				mpc.cM.read(&queryType, &typeOfData, &currentInstances)
 				currentInstances = currentInstances.(int) - 1
-				mpc.cM.write(&queryType, &typeOfData, &currentInstances)
+				mpc.cM.write(&queryType, &typeOfData, currentInstances)
 				publisherStopSignal <- true
 			} else if canUpscale {
 				glog.V(1).Info("upscaling publisher instances by 1")
 				mpc.cM.read(&queryType, &typeOfData, &currentInstances)
 				currentInstances = currentInstances.(int) + 1
-				mpc.cM.write(&queryType, &typeOfData, &currentInstances)
+				mpc.cM.write(&queryType, &typeOfData, currentInstances)
 				go mpc.publishToBus(&startID, &runChunk, bus, publisherStopSignal)
 			}
 		}
