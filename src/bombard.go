@@ -414,7 +414,7 @@ func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Ro
 				}
 				msc.cM.read(queryType, &chunkSizeType, &data)
 				query, columnData := getQuery(queryType, msc.tableName, data.(int), colData, indexedCols, allowMissingIndex)
-				if *queryType == "select" {
+				if *queryType == "read" {
 					q.query = query
 					q.executeRead(msc.db, columnData...)
 					qWT <- q.wt
@@ -803,7 +803,7 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 	busEmpty := make(chan string)
 	bus := make(chan *sql.Rows)
 	wg.Add(5)
-	go mpc.run("select", desiredMetadata, runMetadata, time, bus, busEmpty, &wg, startID, count)
+	go mpc.run("read", desiredMetadata, runMetadata, time, bus, busEmpty, &wg, startID, count)
 
 	createQWT := make(chan int)
 	readQWT := make(chan int)
