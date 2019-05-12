@@ -11,6 +11,7 @@ services:
       - RUN_PHASE_PUBLISH_CHUNK_SIZE=10000
       - RUN_PHASE_PUBLISH_SLEEP_TIME=200
       - RUN_PHASE_SUBSCRIBE_SLEEP_TIME=100
+      - METRIC_POLL_TIME_PERIOD_MS=2000
     command:
       [
         "./bombard",
@@ -28,6 +29,8 @@ services:
         "3306",
         "--database",
         "bigbasket",
+        "--time",
+        "1",
         "--tablename",
         "membercommunication_membercommunicationlog",
         "--run",

@@ -94,20 +94,38 @@ var readRMWTMutex sync.RWMutex
 var updateRMWTMutex sync.RWMutex
 var deleteRMWTMutex sync.RWMutex
 
-var createCMInstancesMutex sync.RWMutex
-var readCMInstancesMutex sync.RWMutex
-var updateCMInstancesMutex sync.RWMutex
-var deleteCMInstancesMutex sync.RWMutex
+// instances mutexes
+var createPCMInstancesMutex sync.RWMutex
+var readPCMInstancesMutex sync.RWMutex
+var updatePCMInstancesMutex sync.RWMutex
+var deletePCMInstancesMutex sync.RWMutex
 
-var createCMSleepMutex sync.RWMutex
-var readCMSleepMutex sync.RWMutex
-var updateCMSleepMutex sync.RWMutex
-var deleteCMSleepMutex sync.RWMutex
+var createSCMInstancesMutex sync.RWMutex
+var readSCMInstancesMutex sync.RWMutex
+var updateSCMInstancesMutex sync.RWMutex
+var deleteSCMInstancesMutex sync.RWMutex
 
-var createCMChunkMutex sync.RWMutex
-var readCMChunkMutex sync.RWMutex
-var updateCMChunkMutex sync.RWMutex
-var deleteCMChunkMutex sync.RWMutex
+// sleep mutexes
+var createPCMSleepMutex sync.RWMutex
+var readPCMSleepMutex sync.RWMutex
+var updatePCMSleepMutex sync.RWMutex
+var deletePCMSleepMutex sync.RWMutex
+
+var createSCMSleepMutex sync.RWMutex
+var readSCMSleepMutex sync.RWMutex
+var updateSCMSleepMutex sync.RWMutex
+var deleteSCMSleepMutex sync.RWMutex
+
+// chunk mutexes
+var createPCMChunkMutex sync.RWMutex
+var readPCMChunkMutex sync.RWMutex
+var updatePCMChunkMutex sync.RWMutex
+var deletePCMChunkMutex sync.RWMutex
+
+var createSCMChunkMutex sync.RWMutex
+var readSCMChunkMutex sync.RWMutex
+var updateSCMChunkMutex sync.RWMutex
+var deleteSCMChunkMutex sync.RWMutex
 
 var dmCPMMutex map[string]*sync.RWMutex
 var dmWTMutex map[string]*sync.RWMutex
@@ -115,9 +133,13 @@ var dmWTMutex map[string]*sync.RWMutex
 var rmCPMMutex map[string]*sync.RWMutex
 var rmWTMutex map[string]*sync.RWMutex
 
-var cmInstancesMutex map[string]*sync.RWMutex
-var cmSleepTimeMutex map[string]*sync.RWMutex
-var cmChunkSizeMutex map[string]*sync.RWMutex
+var pcmInstancesMutex map[string]*sync.RWMutex
+var pcmSleepTimeMutex map[string]*sync.RWMutex
+var pcmChunkSizeMutex map[string]*sync.RWMutex
+
+var scmInstancesMutex map[string]*sync.RWMutex
+var scmSleepTimeMutex map[string]*sync.RWMutex
+var scmChunkSizeMutex map[string]*sync.RWMutex
 
 /*
 DesiredMetadata will never change. contains calls per minute and wait time
@@ -142,9 +164,10 @@ ControllerMetadata is the metadata maintained by MasterPublishController and Mas
 For each type, the keys of the map will be the querytypes
 */
 type ControllerMetadata struct {
-	instances map[string]interface{}
-	chunkSize map[string]interface{}
-	sleepTime map[string]interface{}
+	controllerType string
+	instances      map[string]interface{}
+	chunkSize      map[string]interface{}
+	sleepTime      map[string]interface{}
 }
 
 /*
@@ -196,7 +219,40 @@ func (mpc MasterPublishController) downscale(queryType *string, dM DesiredMetada
 	dM.read(&possibleQueryTypes[1], &wT, &readVal)
 	dM.read(&possibleQueryTypes[2], &wT, &updateVal)
 	dM.read(&possibleQueryTypes[3], &wT, &deleteVal)
-	sum = createVal.(int) + readVal.(int) + updateVal.(int) + deleteVal.(int)
+
+	createDM, ok := createVal.(int)
+	if !ok {
+		if reflect.TypeOf(createVal).String() == "float64" && math.IsInf(createVal.(float64), 1) {
+			return false
+		}
+		panic(ok)
+	}
+
+	readDM, ok := readVal.(int)
+	if !ok {
+		if reflect.TypeOf(readVal).String() == "float64" && math.IsInf(readVal.(float64), 1) {
+			return false
+		}
+		panic(ok)
+	}
+
+	updateDM, ok := updateVal.(int)
+	if !ok {
+		if reflect.TypeOf(updateVal).String() == "float64" && math.IsInf(updateVal.(float64), 1) {
+			return false
+		}
+		panic(ok)
+	}
+
+	deleteDM, ok := deleteVal.(int)
+	if !ok {
+		if reflect.TypeOf(deleteVal).String() == "float64" && math.IsInf(deleteVal.(float64), 1) {
+			return false
+		}
+		panic(ok)
+	}
+
+	sum = createDM + readDM + updateDM + deleteDM
 	avgDMWT := sum / 4
 	sum = 0
 	rM.read(&possibleQueryTypes[0], &wT, &createVal)
@@ -239,6 +295,56 @@ func (msc MasterSubscribeController) downscale(queryType *string, dM DesiredMeta
 		return true
 	}
 	return false
+}
+
+func pollMetrics(metricPollTimePeriod int, rM RunMetadata, stopSignal chan bool) {
+	var createCPM interface{}
+	var readCPM interface{}
+	var updateCPM interface{}
+	var deleteCPM interface{}
+
+	var createWT interface{}
+	var readWT interface{}
+	var updateWT interface{}
+	var deleteWT interface{}
+
+	var typeOfQuery string
+	var typeOfData string
+	for {
+		select {
+		case <-stopSignal:
+			break
+		default:
+			typeOfData = "cpm"
+			glog.V(0).Info("Metrics from Run-Metdata")
+			typeOfQuery = "create"
+
+			rM.read(&typeOfQuery, &typeOfData, &createCPM)
+			typeOfQuery = "read"
+			rM.read(&typeOfQuery, &typeOfData, &readCPM)
+			typeOfQuery = "update"
+			rM.read(&typeOfQuery, &typeOfData, &updateCPM)
+			typeOfQuery = "delete"
+			rM.read(&typeOfQuery, &typeOfData, &deleteCPM)
+
+			typeOfData = "wT"
+			typeOfQuery = "create"
+			rM.read(&typeOfQuery, &typeOfData, &createWT)
+			typeOfQuery = "read"
+			rM.read(&typeOfQuery, &typeOfData, &readWT)
+			typeOfQuery = "update"
+			rM.read(&typeOfQuery, &typeOfData, &updateWT)
+			typeOfQuery = "delete"
+			rM.read(&typeOfQuery, &typeOfData, &deleteWT)
+
+			glog.V(0).Infof("create : CPM: %d, WT: %d", createCPM.(int), createWT.(int))
+			glog.V(0).Infof("read : CPM: %d, WT: %d", readCPM.(int), readWT.(int))
+			glog.V(0).Infof("update : CPM: %d, WT: %d", updateCPM.(int), updateWT.(int))
+			glog.V(0).Infof("delete : CPM: %d, WT: %d", deleteCPM.(int), deleteWT.(int))
+
+			time.Sleep(time.Duration(metricPollTimePeriod) * time.Millisecond)
+		}
+	}
 }
 
 func computeMetrics(queryType string, rM RunMetadata, qWT chan int, stopSignal chan bool) {
@@ -401,10 +507,8 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 	for i := 0; i < currentInstances.(int); i++ {
 		subscriberStopSignal <- true
 	}
-	glog.V(1).Info("Tearing down all `computeMetrics` instances")
-	for i := 0; i < 4; i++ {
-		stopMetricCompute <- true
-	}
+	glog.V(1).Info("Tearing down `computeMetrics` routine")
+	stopMetricCompute <- true
 }
 
 func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, bus chan *sql.Rows, busEmpty chan string, wg *sync.WaitGroup, startID int, runChunk int) {
@@ -421,32 +525,29 @@ func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM 
 		if (time.Now()).Sub(startTime).Minutes() > float64(timeToRun) {
 			break
 		}
-		for {
-			select {
-			case <-busEmpty:
-				glog.V(1).Info("Bus found to be empty")
-				publishDontCare = true
-				break
-			default:
-				break
-			}
-		}
-		canDownscale = mpc.downscale(&queryType, dM, rM, &publishDontCare)
-		canUpscale = mpc.upscale(&queryType, dM, rM, &publishDontCare)
-		publishDontCare = false
+		select {
+		case <-busEmpty:
+			glog.V(1).Info("Bus found to be empty")
+			publishDontCare = true
+		default:
+			// in case the bus is empty, publish will happen only after one tick
+			canDownscale = mpc.downscale(&queryType, dM, rM, &publishDontCare)
+			canUpscale = mpc.upscale(&queryType, dM, rM, &publishDontCare)
+			publishDontCare = false
 
-		if canDownscale {
-			glog.V(1).Info("downscaling publisher instances by 1")
-			mpc.cM.read(&queryType, &typeOfData, &currentInstances)
-			currentInstances = currentInstances.(int) - 1
-			mpc.cM.write(&queryType, &typeOfData, &currentInstances)
-			publisherStopSignal <- true
-		} else if canUpscale {
-			glog.V(1).Info("upscaling publisher instances by 1")
-			mpc.cM.read(&queryType, &typeOfData, &currentInstances)
-			currentInstances = currentInstances.(int) + 1
-			mpc.cM.write(&queryType, &typeOfData, &currentInstances)
-			go mpc.publishToBus(&startID, &runChunk, bus, publisherStopSignal)
+			if canDownscale {
+				glog.V(1).Info("downscaling publisher instances by 1")
+				mpc.cM.read(&queryType, &typeOfData, &currentInstances)
+				currentInstances = currentInstances.(int) - 1
+				mpc.cM.write(&queryType, &typeOfData, &currentInstances)
+				publisherStopSignal <- true
+			} else if canUpscale {
+				glog.V(1).Info("upscaling publisher instances by 1")
+				mpc.cM.read(&queryType, &typeOfData, &currentInstances)
+				currentInstances = currentInstances.(int) + 1
+				mpc.cM.write(&queryType, &typeOfData, &currentInstances)
+				go mpc.publishToBus(&startID, &runChunk, bus, publisherStopSignal)
+			}
 		}
 	}
 	glog.V(1).Info("Tearing down all publisher instances")
@@ -493,26 +594,47 @@ dM: desiredMetadata consisting of CPM, wT //this never changes
 rM: runMetadata consisting of CPM, wT (actual)
 cM: controllerMetadata consisting of instances_running, sleepTime and chunkSize
 */
-func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, subscribeChunkSize int, db *sql.DB, expDB *sql.DB, tableSchema string, tableName string, allowMissingIndex map[string]bool, prepN int, runN int, time int, createCPM int, readCPM int, updateCPM int, deleteCPM int) {
-	cmInstancesMutex = map[string]*sync.RWMutex{
-		"create": &createCMInstancesMutex,
-		"read":   &readCMInstancesMutex,
-		"update": &updateCMInstancesMutex,
-		"delete": &deleteCMInstancesMutex,
+func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int, publishChunkSize int, subscribeChunkSize int, db *sql.DB, expDB *sql.DB, tableSchema string, tableName string, allowMissingIndex map[string]bool, prepN int, runN int, time int, createCPM int, readCPM int, updateCPM int, deleteCPM int) {
+	pcmInstancesMutex = map[string]*sync.RWMutex{
+		"create": &createPCMInstancesMutex,
+		"read":   &readPCMInstancesMutex,
+		"update": &updatePCMInstancesMutex,
+		"delete": &deletePCMInstancesMutex,
 	}
 
-	cmChunkSizeMutex = map[string]*sync.RWMutex{
-		"create": &createCMChunkMutex,
-		"read":   &readCMChunkMutex,
-		"update": &updateCMChunkMutex,
-		"delete": &deleteCMChunkMutex,
+	pcmChunkSizeMutex = map[string]*sync.RWMutex{
+		"create": &createPCMChunkMutex,
+		"read":   &readPCMChunkMutex,
+		"update": &updatePCMChunkMutex,
+		"delete": &deletePCMChunkMutex,
 	}
 
-	cmSleepTimeMutex = map[string]*sync.RWMutex{
-		"create": &createCMSleepMutex,
-		"read":   &readCMSleepMutex,
-		"update": &updateCMSleepMutex,
-		"delete": &deleteCMSleepMutex,
+	pcmSleepTimeMutex = map[string]*sync.RWMutex{
+		"create": &createPCMSleepMutex,
+		"read":   &readPCMSleepMutex,
+		"update": &updatePCMSleepMutex,
+		"delete": &deletePCMSleepMutex,
+	}
+
+	scmInstancesMutex = map[string]*sync.RWMutex{
+		"create": &createSCMInstancesMutex,
+		"read":   &readSCMInstancesMutex,
+		"update": &updateSCMInstancesMutex,
+		"delete": &deleteSCMInstancesMutex,
+	}
+
+	scmChunkSizeMutex = map[string]*sync.RWMutex{
+		"create": &createSCMChunkMutex,
+		"read":   &readSCMChunkMutex,
+		"update": &updateSCMChunkMutex,
+		"delete": &deleteSCMChunkMutex,
+	}
+
+	scmSleepTimeMutex = map[string]*sync.RWMutex{
+		"create": &createSCMSleepMutex,
+		"read":   &readSCMSleepMutex,
+		"update": &updateSCMSleepMutex,
+		"delete": &deleteSCMSleepMutex,
 	}
 
 	dmCPMMutex = map[string]*sync.RWMutex{
@@ -545,6 +667,10 @@ func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, sub
 
 	var mpc MasterPublishController
 	var msc MasterSubscribeController
+
+	mpc.cM.controllerType = "publish"
+	msc.cM.controllerType = "subscribe"
+
 	mpc.cM.instances = map[string]interface{}{
 		"create": 0,
 		"read":   0,
@@ -684,13 +810,20 @@ func run(publishSleepTime int, subscribeSleepTime int, publishChunkSize int, sub
 	updateQWT := make(chan int)
 	deleteQWT := make(chan int)
 
-	glog.V(1).Info("Starting subscribers")
+	stopPollSignal := make(chan bool)
+	glog.V(1).Infof("Starting pollMetrics routine")
+	go pollMetrics(metricPollTimePeriod, runMetadata, stopPollSignal)
+
+	go glog.V(1).Info("Starting subscribers")
 	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, createQWT, &wg)
 	go msc.run("read", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, readQWT, &wg)
 	go msc.run("update", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, updateQWT, &wg)
 	go msc.run("delete", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, deleteQWT, &wg)
 	glog.V(1).Info("Waiting for MasterPublishController and MasterSubscribeController to finish")
 	wg.Wait()
+
+	glog.V(1).Info("Stoppinig pollMetrics routine")
+	stopPollSignal <- true
 
 }
 
@@ -724,6 +857,7 @@ func main() {
 	tempTablePrepSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_PREP_SIZE_RATIO"), 32) // the ratio of the temp table size to the actual table size, this amount of data is copied
 	// to the temporary table from the new table
 	tempTableRunSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_RUN_SIZE_RATIO"), 32)
+	metricPollTimePeriod, _ := strconv.ParseInt(os.Getenv("METRIC_POLL_TIME_PERIOD_MS"), 10, 0)
 
 	if insertCommitsAfter == 0 {
 		defVal := 1000
@@ -759,6 +893,11 @@ func main() {
 		defVal := 100
 		glog.V(0).Infof("RUN_PHASE_SUBSCRIBE_SLEEP_TIME has not been set, defaulting to %d", defVal)
 		runPhaseSubscribeSleepTime = int64(defVal)
+	}
+	if metricPollTimePeriod == 0 {
+		defVal := 1000
+		glog.V(0).Infof("METRIC_POLL_TIME_PERIOD_MS has not been set, defaulting to %d", defVal)
+		metricPollTimePeriod = int64(defVal)
 	}
 
 	// TODO: this feature has not been added yet, once added uncomment this part
@@ -849,7 +988,7 @@ func main() {
 			"update": *allowMissingIndexUpdate,
 			"delete": *allowMissingIndexDelete,
 		}
-		run(int(runPhasePublishSleepTime), int(runPhaseSubscribeSleepTime), int(runPhasePublishChunkSize), 1, conn, expConn, *db, *table, allowMissingIndex, prepN, runN, *time, *createCPM, *readCPM, *updateCPM, *deleteCPM)
+		run(int(metricPollTimePeriod), int(runPhasePublishSleepTime), int(runPhaseSubscribeSleepTime), int(runPhasePublishChunkSize), 1, conn, expConn, *db, *table, allowMissingIndex, prepN, runN, *time, *createCPM, *readCPM, *updateCPM, *deleteCPM)
 
 	} else {
 		glog.V(0).Info("Neither prep nor run passed. Aborting!!!")

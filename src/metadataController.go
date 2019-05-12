@@ -83,19 +83,32 @@ func (m RunMetadata) write(queryType *string, typeOfData *string, data interface
 func (m ControllerMetadata) read(queryType *string, typeOfData *string, data *interface{}) {
 	var mutex *sync.RWMutex
 	if *typeOfData == "instances" {
-		mutex = cmInstancesMutex[*queryType]
+		if m.controllerType == "publish" {
+			mutex = pcmInstancesMutex[*queryType]
+		} else {
+			mutex = scmInstancesMutex[*queryType]
+		}
+
 		glog.V(4).Infof("Acquiring read lock for instances for queryType: %s", *queryType)
 		mutex.RLock()
 		d := m.instances[*queryType].(interface{})
 		*data = d
 	} else if *typeOfData == "chunk_size" {
-		mutex = cmChunkSizeMutex[*queryType]
+		if m.controllerType == "publish" {
+			mutex = pcmChunkSizeMutex[*queryType]
+		} else {
+			mutex = scmChunkSizeMutex[*queryType]
+		}
 		glog.V(4).Infof("Acquiring read lock for chunk_size for queryType: %s", *queryType)
 		mutex.RLock()
 		d := m.chunkSize[*queryType].(interface{})
 		*data = d
 	} else if *typeOfData == "sleep_time" {
-		mutex = cmSleepTimeMutex[*queryType]
+		if m.controllerType == "publish" {
+			mutex = pcmSleepTimeMutex[*queryType]
+		} else {
+			mutex = scmSleepTimeMutex[*queryType]
+		}
 		glog.V(4).Infof("Acquiring read lock for sleep_time for queryType: %s", *queryType)
 		mutex.RLock()
 		d := m.sleepTime[*queryType].(interface{})
@@ -110,17 +123,29 @@ func (m ControllerMetadata) read(queryType *string, typeOfData *string, data *in
 func (m ControllerMetadata) write(queryType *string, typeOfData *string, data interface{}) {
 	var mutex *sync.RWMutex
 	if *typeOfData == "instances" {
-		mutex = cmInstancesMutex[*queryType]
+		if m.controllerType == "publish" {
+			mutex = pcmInstancesMutex[*queryType]
+		} else {
+			mutex = scmInstancesMutex[*queryType]
+		}
 		glog.V(4).Infof("Acquiring lock for instances for queryType: %s", *queryType)
 		mutex.Lock()
 		m.instances[*queryType] = data
 	} else if *typeOfData == "chunk_size" {
-		mutex = cmChunkSizeMutex[*queryType]
+		if m.controllerType == "publish" {
+			mutex = pcmChunkSizeMutex[*queryType]
+		} else {
+			mutex = scmChunkSizeMutex[*queryType]
+		}
 		glog.V(4).Infof("Acquiring lock for chunk_size for queryType: %s", *queryType)
 		mutex.Lock()
 		m.chunkSize[*queryType] = data
 	} else if *typeOfData == "sleep_time" {
-		mutex = cmSleepTimeMutex[*queryType]
+		if m.controllerType == "publish" {
+			mutex = pcmSleepTimeMutex[*queryType]
+		} else {
+			mutex = scmSleepTimeMutex[*queryType]
+		}
 		glog.V(4).Infof("Acquiring lock for sleep_time for queryType: %s", *queryType)
 		mutex.Lock()
 		m.sleepTime[*queryType] = data
