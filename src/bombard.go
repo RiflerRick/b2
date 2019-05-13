@@ -331,7 +331,6 @@ func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Ro
 				}
 				msc.cM.read(queryType, &chunkSizeType, &data)
 				query, columnData := getQuery(queryType, msc.tableName, data.(int), colData, indexedCols, allowMissingIndex)
-				fmt.Println(query)
 				if *queryType == "read" {
 					q.query = query
 					q.executeRead(msc.db, columnData...)

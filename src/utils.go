@@ -286,8 +286,8 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 				columnData += fmt.Sprintf("?, ")
 				data = append(data, v)
 			}
-			columnName = strings.TrimSuffix(columnName, ",")
-			columnData = strings.TrimSuffix(columnData, ",")
+			columnName = strings.TrimSuffix(columnName, ", ")
+			columnData = strings.TrimSuffix(columnData, ", ")
 			baseQuery += fmt.Sprintf(" (%s) VALUES(%s)", columnName, columnData)
 			query = baseQuery
 			break
