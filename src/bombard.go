@@ -331,6 +331,7 @@ func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Ro
 				}
 				msc.cM.read(queryType, &chunkSizeType, &data)
 				query, columnData := getQuery(queryType, msc.tableName, data.(int), colData, indexedCols, allowMissingIndex)
+				fmt.Println(query)
 				if *queryType == "read" {
 					q.query = query
 					q.executeRead(msc.db, columnData...)
@@ -695,25 +696,25 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 	if createCPM == 0 {
 		desiredMetadata.wT["create"] = math.Inf(1)
 	} else {
-		desiredMetadata.wT["create"] = (60 / createCPM) * 1000
+		desiredMetadata.wT["create"] = (60 / createCPM) * 1000 * 1000
 	}
 
 	if readCPM == 0 {
 		desiredMetadata.wT["read"] = math.Inf(1)
 	} else {
-		desiredMetadata.wT["read"] = (60 / readCPM) * 1000
+		desiredMetadata.wT["read"] = (60 / readCPM) * 1000 * 1000
 	}
 
 	if updateCPM == 0 {
 		desiredMetadata.wT["update"] = math.Inf(1)
 	} else {
-		desiredMetadata.wT["update"] = (60 / updateCPM) * 1000
+		desiredMetadata.wT["update"] = (60 / updateCPM) * 1000 * 1000
 	}
 
 	if deleteCPM == 0 {
 		desiredMetadata.wT["delete"] = math.Inf(1)
 	} else {
-		desiredMetadata.wT["delete"] = (60 / deleteCPM) * 1000
+		desiredMetadata.wT["delete"] = (60 / deleteCPM) * 1000 * 1000
 	}
 
 	runMetadata.cpm = map[string]interface{}{
