@@ -105,12 +105,69 @@ func getRunChunk(db *sql.DB, table string, runN int, prepN int) (int, int) {
 	return startID, count
 }
 
-func getSubset(colSelect map[string]bool) {
+func getColSubset(colSelect map[string]bool, allowIDSelection bool, indexedCols map[string]bool, allowMissingIndex bool) {
+	numSelected := 0
 	for k := range colSelect {
 		if rand.Intn(2) == 1 {
-			colSelect[k] = true
+			switch allowIDSelection {
+			case false:
+				switch allowMissingIndex {
+				case false:
+					if k != "id" && indexedCols[k] {
+						colSelect[k] = true
+						numSelected++
+					}
+				}
+			case true:
+				if k != "id" {
+					colSelect[k] = true
+					numSelected++
+				}
+			case true:
+				switch allowMissingIndex {
+				case false:
+					if indexedCols[k] {
+						colSelect[k] = true
+						numSelected++
+					}
+				}
+			case true:
+				colSelect[k] = true
+				numSelected++
+			}
 		} else {
 			colSelect[k] = false
+		}
+	}
+	// select everything except id field in case nothing got selected
+	if numSelected < 1 {
+		for k := range colSelect {
+			switch allowIDSelection {
+			case false:
+				switch allowMissingIndex {
+				case false:
+					if k != "id" && indexedCols[k] {
+						colSelect[k] = true
+						numSelected++
+					}
+				}
+			case true:
+				if k != "id" {
+					colSelect[k] = true
+					numSelected++
+				}
+			case true:
+				switch allowMissingIndex {
+				case false:
+					if indexedCols[k] {
+						colSelect[k] = true
+						numSelected++
+					}
+				}
+			case true:
+				colSelect[k] = true
+				numSelected++
+			}
 		}
 	}
 }
@@ -175,7 +232,6 @@ func computeMetrics(queryType string, rM RunMetadata, qWT chan int, stopSignal c
 			break
 		default:
 			totalWT += <-qWT
-			fmt.Println("got wt")
 			timeElapsed := (time.Now()).Sub(startTime)
 			timeElapsedSeconds := timeElapsed.Seconds()
 			var rMCPM interface{}
@@ -207,19 +263,12 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 	}
 	for true {
 		if *queryType == "read" {
-			getSubset(colSelect)
+			getColSubset(colSelect, false, indexedCols, allowMissingIndex["read"])
 			baseQuery := fmt.Sprintf("SELECT * FROM %s WHERE ", *tableName)
 			for k, v := range colData {
-				if allowMissingIndex["read"] {
-					if colSelect[k] {
-						baseQuery += fmt.Sprintf("%s = ? and ", k)
-						data = append(data, v)
-					}
-				} else {
-					if colSelect[k] && indexedCols[k] {
-						baseQuery += fmt.Sprintf("%s = ? and ", k)
-						data = append(data, v)
-					}
+				if colSelect[k] {
+					baseQuery += fmt.Sprintf("%s = ? and ", k)
+					data = append(data, v)
 				}
 			}
 			baseQuery = strings.TrimSuffix(baseQuery, " and ")
@@ -244,36 +293,19 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 			break
 		} else if *queryType == "update" {
 			baseQuery := fmt.Sprintf("UPDATE %s SET ", *tableName)
-			getSubset(colSelect)
+			getColSubset(colSelect, false, indexedCols, allowMissingIndex["update"])
 			for k, v := range colData {
-				if k == "id" {
-					continue // we cannot set the id
-				}
-				if allowMissingIndex["update"] {
-					if colSelect[k] {
-						baseQuery += fmt.Sprintf("%s = ?,", k)
-						data = append(data, v)
-					}
-				} else {
-					if colSelect[k] && indexedCols[k] {
-						baseQuery += fmt.Sprintf("%s = ?,", k)
-						data = append(data, v)
-					}
+				if colSelect[k] {
+					baseQuery += fmt.Sprintf("%s = ?,", k)
+					data = append(data, v)
 				}
 			}
 			baseQuery = strings.TrimSuffix(baseQuery, ",") + " WHERE "
-			getSubset(colSelect)
+			getColSubset(colSelect, false, indexedCols, allowMissingIndex["update"])
 			for k, v := range colData {
-				if allowMissingIndex["update"] {
-					if colSelect[k] {
-						baseQuery += fmt.Sprintf("%s = ? and ", k)
-						data = append(data, v)
-					}
-				} else {
-					if colSelect[k] && indexedCols[k] {
-						baseQuery += fmt.Sprintf("%s = ? and ", k)
-						data = append(data, v)
-					}
+				if colSelect[k] {
+					baseQuery += fmt.Sprintf("%s = ? and ", k)
+					data = append(data, v)
 				}
 			}
 			baseQuery = strings.TrimSuffix(baseQuery, " and ")
@@ -281,18 +313,11 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 			break
 		} else {
 			baseQuery := fmt.Sprintf("DELETE FROM %s ", *tableName)
-			getSubset(colSelect)
+			getColSubset(colSelect, false, indexedCols, allowMissingIndex["delete"])
 			for k, v := range colData {
-				if allowMissingIndex["read"] {
-					if colSelect[k] {
-						baseQuery += fmt.Sprintf("%s = ? and ", k)
-						data = append(data, v)
-					}
-				} else {
-					if colSelect[k] && indexedCols[k] {
-						baseQuery += fmt.Sprintf("%s = ? and ", k)
-						data = append(data, v)
-					}
+				if colSelect[k] {
+					baseQuery += fmt.Sprintf("%s = ? and ", k)
+					data = append(data, v)
 				}
 			}
 			baseQuery = strings.TrimSuffix(baseQuery, " and ")
