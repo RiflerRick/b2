@@ -489,13 +489,13 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 		canUpscale = msc.upscale(&queryType, dM, rM, &subscribeDontCare)
 
 		if canDownscale {
-			glog.V(1).Info("downscaling subscriber instances by one")
+			glog.V(3).Info("downscaling subscriber instances by one")
 			msc.cM.read(&queryType, &typeOfData, &currentInstances)
 			currentInstances = currentInstances.(int) - 1
 			msc.cM.write(&queryType, &typeOfData, currentInstances)
 			subscriberStopSignal <- true
 		} else if canUpscale {
-			glog.V(1).Info("upscaling subscriber instances by one")
+			glog.V(3).Info("upscaling subscriber instances by one")
 			msc.cM.read(&queryType, &typeOfData, &currentInstances)
 			currentInstances = currentInstances.(int) + 1
 			msc.cM.write(&queryType, &typeOfData, currentInstances)
@@ -527,7 +527,7 @@ func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM 
 		}
 		select {
 		case <-busEmpty:
-			glog.V(1).Info("Bus found to be empty")
+			glog.V(3).Info("Bus found to be empty")
 			publishDontCare = true
 		default:
 			// in case the bus is empty, publish will happen only after one tick
@@ -536,13 +536,13 @@ func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM 
 			publishDontCare = false
 
 			if canDownscale {
-				glog.V(1).Info("downscaling publisher instances by 1")
+				glog.V(3).Info("downscaling publisher instances by 1")
 				mpc.cM.read(&queryType, &typeOfData, &currentInstances)
 				currentInstances = currentInstances.(int) - 1
 				mpc.cM.write(&queryType, &typeOfData, currentInstances)
 				publisherStopSignal <- true
 			} else if canUpscale {
-				glog.V(1).Info("upscaling publisher instances by 1")
+				glog.V(3).Info("upscaling publisher instances by 1")
 				mpc.cM.read(&queryType, &typeOfData, &currentInstances)
 				currentInstances = currentInstances.(int) + 1
 				mpc.cM.write(&queryType, &typeOfData, currentInstances)
