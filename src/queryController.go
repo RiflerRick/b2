@@ -32,7 +32,7 @@ func (q Query) executeRead(db *sql.DB, data ...interface{}) *sql.Rows {
 	st := time.Now()
 	rows, err := db.Query(q.query, data...)
 	et := time.Now()
-	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000 * 1000))
 	if err != nil {
 		glog.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func (q Query) executeReadRow(db *sql.DB, data ...interface{}) *sql.Row {
 	st := time.Now()
 	row := db.QueryRow(q.query, data...)
 	et := time.Now()
-	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000 * 1000))
 	return row
 }
 
@@ -55,7 +55,7 @@ func (q Query) executeReadAsync(db *sql.DB, rowChan chan *sql.Rows, data ...inte
 	st := time.Now()
 	rows, err := db.Query(q.query, data...)
 	et := time.Now()
-	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000 * 1000))
 	if err != nil {
 		glog.Info(err)
 		return
@@ -67,7 +67,7 @@ func (q Query) executeReadRowAsync(db *sql.DB, rowChan chan *sql.Row, data ...in
 	st := time.Now()
 	row := db.QueryRow(q.query, data...)
 	et := time.Now()
-	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000 * 1000))
 	rowChan <- row
 }
 
@@ -78,7 +78,7 @@ func (q Query) executeWrite(db *sql.DB, data ...interface{}) {
 	if err != nil {
 		glog.Fatal(err)
 	}
-	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000 * 1000))
 }
 
 func (t Transaction) commit() {
@@ -88,7 +88,7 @@ func (t Transaction) commit() {
 		glog.Fatal(err)
 	}
 	et := time.Now()
-	t.wt = int(math.Round(et.Sub(st).Seconds() * 1000))
+	t.wt = int(math.Round(et.Sub(st).Seconds() * 1000 * 1000))
 }
 
 func (t Transaction) execute(query string, data ...interface{}) {
