@@ -3,9 +3,11 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"math/rand"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/golang/glog"
 )
@@ -111,7 +113,85 @@ func getSubset(colSelect map[string]bool) {
 			colSelect[k] = false
 		}
 	}
+}
 
+func pollMetrics(metricPollTimePeriod int, rM RunMetadata, stopSignal chan bool) {
+	var createCPM interface{}
+	var readCPM interface{}
+	var updateCPM interface{}
+	var deleteCPM interface{}
+
+	var createWT interface{}
+	var readWT interface{}
+	var updateWT interface{}
+	var deleteWT interface{}
+
+	var typeOfQuery string
+	var typeOfData string
+	for {
+		select {
+		case <-stopSignal:
+			break
+		default:
+			typeOfData = "cpm"
+			glog.V(0).Info("Metrics from Run-Metdata")
+			typeOfQuery = "create"
+
+			rM.read(&typeOfQuery, &typeOfData, &createCPM)
+			typeOfQuery = "read"
+			rM.read(&typeOfQuery, &typeOfData, &readCPM)
+			typeOfQuery = "update"
+			rM.read(&typeOfQuery, &typeOfData, &updateCPM)
+			typeOfQuery = "delete"
+			rM.read(&typeOfQuery, &typeOfData, &deleteCPM)
+
+			typeOfData = "wT"
+			typeOfQuery = "create"
+			rM.read(&typeOfQuery, &typeOfData, &createWT)
+			typeOfQuery = "read"
+			rM.read(&typeOfQuery, &typeOfData, &readWT)
+			typeOfQuery = "update"
+			rM.read(&typeOfQuery, &typeOfData, &updateWT)
+			typeOfQuery = "delete"
+			rM.read(&typeOfQuery, &typeOfData, &deleteWT)
+
+			glog.V(0).Infof("create : CPM: %d, WT: %d", createCPM.(int)*60, createWT.(int))
+			glog.V(0).Infof("read : CPM: %d, WT: %d", readCPM.(int)*60, readWT.(int))
+			glog.V(0).Infof("update : CPM: %d, WT: %d", updateCPM.(int)*60, updateWT.(int))
+			glog.V(0).Infof("delete : CPM: %d, WT: %d", deleteCPM.(int)*60, deleteWT.(int))
+
+			time.Sleep(time.Duration(metricPollTimePeriod) * time.Millisecond)
+		}
+	}
+}
+
+func computeMetrics(queryType string, rM RunMetadata, qWT chan int, stopSignal chan bool) {
+	totalQExecuted := 0
+	totalWT := 0
+	startTime := time.Now()
+	for {
+		select {
+		case <-stopSignal:
+			break
+		default:
+			totalWT += <-qWT
+			fmt.Println("got wt")
+			timeElapsed := (time.Now()).Sub(startTime)
+			timeElapsedSeconds := timeElapsed.Seconds()
+			var rMCPM interface{}
+			var rMWT interface{}
+			cpmType := "cpm"
+			wTType := "wT"
+			rM.read(&queryType, &cpmType, &rMCPM)
+			rM.read(&queryType, &wTType, &rMWT)
+
+			totalQExecuted++
+			// fmt.Printf("cpm for queryType: %s is %d", queryType, int(math.Round(float64(totalQExecuted)/timeElapsedMin)))
+			// fmt.Printf("waitTime for queryType: %s is %d", queryType, int(math.Round(float64(totalWT/totalQExecuted))))
+			rM.write(&queryType, &cpmType, int(math.Round(float64(totalQExecuted)/timeElapsedSeconds)))
+			rM.write(&queryType, &wTType, int(math.Round(float64(totalWT/totalQExecuted))))
+		}
+	}
 }
 
 func getQuery(queryType *string, tableName *string, writeChunkSize int, colData map[string]interface{}, indexedCols map[string]bool, allowMissingIndex map[string]bool) (string, []interface{}) {
@@ -133,12 +213,12 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 				if allowMissingIndex["read"] {
 					if colSelect[k] {
 						baseQuery += fmt.Sprintf("%s = ? and ", k)
-						data = append(data, v.(string))
+						data = append(data, v)
 					}
 				} else {
 					if colSelect[k] && indexedCols[k] {
 						baseQuery += fmt.Sprintf("%s = ? and ", k)
-						data = append(data, v.(string))
+						data = append(data, v)
 					}
 				}
 			}
@@ -155,7 +235,7 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 				}
 				columnName += fmt.Sprintf("%s, ", k)
 				columnData += fmt.Sprintf("?, ")
-				data = append(data, v.(string))
+				data = append(data, v)
 			}
 			columnName = strings.TrimSuffix(columnName, ",")
 			columnData = strings.TrimSuffix(columnData, ",")
@@ -166,15 +246,18 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 			baseQuery := fmt.Sprintf("UPDATE %s SET ", *tableName)
 			getSubset(colSelect)
 			for k, v := range colData {
+				if k == "id" {
+					continue // we cannot set the id
+				}
 				if allowMissingIndex["update"] {
 					if colSelect[k] {
 						baseQuery += fmt.Sprintf("%s = ?,", k)
-						data = append(data, v.(string))
+						data = append(data, v)
 					}
 				} else {
 					if colSelect[k] && indexedCols[k] {
 						baseQuery += fmt.Sprintf("%s = ?,", k)
-						data = append(data, v.(string))
+						data = append(data, v)
 					}
 				}
 			}
@@ -184,12 +267,12 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 				if allowMissingIndex["update"] {
 					if colSelect[k] {
 						baseQuery += fmt.Sprintf("%s = ? and ", k)
-						data = append(data, v.(string))
+						data = append(data, v)
 					}
 				} else {
 					if colSelect[k] && indexedCols[k] {
 						baseQuery += fmt.Sprintf("%s = ? and ", k)
-						data = append(data, v.(string))
+						data = append(data, v)
 					}
 				}
 			}
@@ -203,12 +286,12 @@ func getQuery(queryType *string, tableName *string, writeChunkSize int, colData 
 				if allowMissingIndex["read"] {
 					if colSelect[k] {
 						baseQuery += fmt.Sprintf("%s = ? and ", k)
-						data = append(data, v.(string))
+						data = append(data, v)
 					}
 				} else {
 					if colSelect[k] && indexedCols[k] {
 						baseQuery += fmt.Sprintf("%s = ? and ", k)
-						data = append(data, v.(string))
+						data = append(data, v)
 					}
 				}
 			}

@@ -297,89 +297,6 @@ func (msc MasterSubscribeController) downscale(queryType *string, dM DesiredMeta
 	return false
 }
 
-func pollMetrics(metricPollTimePeriod int, rM RunMetadata, stopSignal chan bool) {
-	var createCPM interface{}
-	var readCPM interface{}
-	var updateCPM interface{}
-	var deleteCPM interface{}
-
-	var createWT interface{}
-	var readWT interface{}
-	var updateWT interface{}
-	var deleteWT interface{}
-
-	var typeOfQuery string
-	var typeOfData string
-	for {
-		select {
-		case <-stopSignal:
-			break
-		default:
-			typeOfData = "cpm"
-			glog.V(0).Info("Metrics from Run-Metdata")
-			typeOfQuery = "create"
-
-			rM.read(&typeOfQuery, &typeOfData, &createCPM)
-			typeOfQuery = "read"
-			rM.read(&typeOfQuery, &typeOfData, &readCPM)
-			typeOfQuery = "update"
-			rM.read(&typeOfQuery, &typeOfData, &updateCPM)
-			typeOfQuery = "delete"
-			rM.read(&typeOfQuery, &typeOfData, &deleteCPM)
-
-			typeOfData = "wT"
-			typeOfQuery = "create"
-			rM.read(&typeOfQuery, &typeOfData, &createWT)
-			typeOfQuery = "read"
-			rM.read(&typeOfQuery, &typeOfData, &readWT)
-			typeOfQuery = "update"
-			rM.read(&typeOfQuery, &typeOfData, &updateWT)
-			typeOfQuery = "delete"
-			rM.read(&typeOfQuery, &typeOfData, &deleteWT)
-
-			glog.V(0).Infof("create : CPM: %d, WT: %d", createCPM.(int), createWT.(int))
-			glog.V(0).Infof("read : CPM: %d, WT: %d", readCPM.(int), readWT.(int))
-			glog.V(0).Infof("update : CPM: %d, WT: %d", updateCPM.(int), updateWT.(int))
-			glog.V(0).Infof("delete : CPM: %d, WT: %d", deleteCPM.(int), deleteWT.(int))
-
-			time.Sleep(time.Duration(metricPollTimePeriod) * time.Millisecond)
-		}
-	}
-}
-
-func computeMetrics(queryType string, rM RunMetadata, qWT chan int, stopSignal chan bool) {
-	metricVisibilityWindow := 500 // in milliseconds
-	totalQExecuted := 0
-	totalWT := 0
-	startTime := time.Now()
-	for {
-		select {
-		case <-stopSignal:
-			break
-		default:
-			totalWT += <-qWT
-			timeElapsed := (time.Now()).Sub(startTime)
-			timeElapsedMin := timeElapsed.Minutes()
-			timeElapsedMil := int(timeElapsed.Seconds() * 1000)
-			var rMCPM interface{}
-			var rMWT interface{}
-			cpmType := "cpm"
-			wTType := "wT"
-			rM.read(&queryType, &cpmType, &rMCPM)
-			rM.read(&queryType, &wTType, &rMCPM)
-
-			if timeElapsedMil%metricVisibilityWindow == 0 {
-				glog.V(1).Infof("queryType: %s; CPM: %d; wT: %d ms", queryType, rMCPM.(int), rMWT.(int))
-			}
-			totalQExecuted++
-			// fmt.Printf("cpm for queryType: %s is %d", queryType, int(math.Round(float64(totalQExecuted)/timeElapsedMin)))
-			// fmt.Printf("waitTime for queryType: %s is %d", queryType, int(math.Round(float64(totalWT/totalQExecuted))))
-			rM.write(&queryType, &cpmType, int(math.Round(float64(totalQExecuted)/timeElapsedMin)))
-			rM.write(&queryType, &wTType, int(math.Round(float64(totalWT/totalQExecuted))))
-		}
-	}
-}
-
 /*
 subscribe to bus for hitting the db. sleep decides how much to sleep in between queries
 queryTypeCPM: map storing the CPM values for each query. The type of query to be fired will be chosen by this CPM
@@ -454,7 +371,7 @@ func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus ch
 		default:
 			offset := r.Intn(*count)
 			mpc.cM.read(&queryType, &chunkSizeType, &data)
-			rows, err := mpc.db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", *(mpc.tableName), startID, data.(int), offset))
+			rows, err := mpc.db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", *(mpc.tableName), *startID, data.(int), offset))
 			if err != nil {
 				glog.Info(err)
 				return
@@ -469,6 +386,7 @@ func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus ch
 func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, busEmpty chan string, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	relaxationTimeInMS := 500
 	subscribeDontCare := false
 	var canUpscale bool
 	var canDownscale bool
@@ -489,18 +407,19 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 		canUpscale = msc.upscale(&queryType, dM, rM, &subscribeDontCare)
 
 		if canDownscale {
-			glog.V(3).Info("downscaling subscriber instances by one")
+			glog.V(2).Info("downscaling subscriber instances by one")
 			msc.cM.read(&queryType, &typeOfData, &currentInstances)
 			currentInstances = currentInstances.(int) - 1
 			msc.cM.write(&queryType, &typeOfData, currentInstances)
 			subscriberStopSignal <- true
 		} else if canUpscale {
-			glog.V(3).Info("upscaling subscriber instances by one")
+			glog.V(2).Info("upscaling subscriber instances by one")
 			msc.cM.read(&queryType, &typeOfData, &currentInstances)
 			currentInstances = currentInstances.(int) + 1
 			msc.cM.write(&queryType, &typeOfData, currentInstances)
 			go msc.bombard(&queryType, bus, indexedColumns, allowMissingIndex, qWT, busEmpty, subscriberStopSignal)
 		}
+		time.Sleep(time.Duration(relaxationTimeInMS) * time.Millisecond)
 	}
 	glog.V(1).Info("Tearing down all subscriber instances")
 	msc.cM.read(&queryType, &typeOfData, &currentInstances)
@@ -513,6 +432,8 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 
 func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, bus chan *sql.Rows, busEmpty chan string, wg *sync.WaitGroup, startID int, runChunk int) {
 	defer wg.Done()
+
+	relaxationTimeInMS := 500
 
 	publishDontCare := false
 	var canUpscale bool
@@ -527,7 +448,7 @@ func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM 
 		}
 		select {
 		case <-busEmpty:
-			glog.V(3).Info("Bus found to be empty")
+			glog.V(2).Info("Bus found to be empty")
 			publishDontCare = true
 		default:
 			// in case the bus is empty, publish will happen only after one tick
@@ -536,18 +457,20 @@ func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM 
 			publishDontCare = false
 
 			if canDownscale {
-				glog.V(3).Info("downscaling publisher instances by 1")
+				glog.V(2).Info("downscaling publisher instances by 1")
 				mpc.cM.read(&queryType, &typeOfData, &currentInstances)
 				currentInstances = currentInstances.(int) - 1
 				mpc.cM.write(&queryType, &typeOfData, currentInstances)
 				publisherStopSignal <- true
 			} else if canUpscale {
-				glog.V(3).Info("upscaling publisher instances by 1")
+				glog.V(2).Info("upscaling publisher instances by 1")
 				mpc.cM.read(&queryType, &typeOfData, &currentInstances)
 				currentInstances = currentInstances.(int) + 1
 				mpc.cM.write(&queryType, &typeOfData, currentInstances)
 				go mpc.publishToBus(&startID, &runChunk, bus, publisherStopSignal)
 			}
+			// relax for a few milliseconds
+			time.Sleep(time.Duration(relaxationTimeInMS) * time.Millisecond)
 		}
 	}
 	glog.V(1).Info("Tearing down all publisher instances")
@@ -695,6 +618,13 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 		"update": 0,
 		"delete": 0,
 	}
+
+	expTableName := fmt.Sprintf("%s_c4", tableName)
+	mpc.tableName = &tableName
+	msc.tableName = &expTableName
+	mpc.db = db
+	msc.db = expDB
+
 	msc.cM.sleepTime = map[string]interface{}{
 		"create": subscribeSleepTime,
 		"read":   subscribeSleepTime,
