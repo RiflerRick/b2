@@ -222,7 +222,7 @@ func pollMetrics(metricPollTimePeriod int, rM RunMetadata, stopSignal chan bool)
 	}
 }
 
-func computeMetrics(queryType string, rM RunMetadata, qWT chan int, stopSignal chan bool) {
+func computeMetrics(queryType string, rM RunMetadata, qWT chan int, cM ControllerMetadata, stopSignal chan bool) {
 	totalQExecuted := 0
 	totalWT := 0
 	startTime := time.Now()
@@ -234,16 +234,17 @@ func computeMetrics(queryType string, rM RunMetadata, qWT chan int, stopSignal c
 			totalWT += <-qWT
 			timeElapsed := (time.Now()).Sub(startTime)
 			timeElapsedSeconds := timeElapsed.Seconds()
-			var rMCPM interface{}
-			var rMWT interface{}
 			cpmType := "cpm"
 			wTType := "wT"
-			rM.read(&queryType, &cpmType, &rMCPM)
-			rM.read(&queryType, &wTType, &rMWT)
+			// var cMInstances interface{}
+			// cMInstancesType := "instances"
+			// cM.read(&queryType, &cMInstancesType, &cMInstances)
+			// fmt.Printf("instances for subscribe queryType: %s is %d\n", queryType, cMInstances)
 
 			totalQExecuted++
-			// fmt.Printf("cpm for queryType: %s is %d", queryType, int(math.Round(float64(totalQExecuted)/timeElapsedMin)))
-			// fmt.Printf("waitTime for queryType: %s is %d", queryType, int(math.Round(float64(totalWT/totalQExecuted))))
+
+			// fmt.Printf("CPM now: %d\n", int(math.Round(float64(totalQExecuted)/timeElapsedSeconds)))
+
 			rM.write(&queryType, &cpmType, int(math.Round(float64(totalQExecuted)/timeElapsedSeconds)))
 			rM.write(&queryType, &wTType, int(math.Round(float64(totalWT/totalQExecuted))))
 		}

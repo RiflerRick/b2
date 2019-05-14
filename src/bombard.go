@@ -333,7 +333,8 @@ func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Ro
 				query, columnData := getQuery(queryType, msc.tableName, data.(int), colData, indexedCols, allowMissingIndex)
 				if *queryType == "read" {
 					q.query = query
-					q.executeRead(msc.db, columnData...)
+					rows := q.executeRead(msc.db, columnData...)
+					rows.Close()
 					qWT <- q.wt
 				} else {
 					q.query = query
@@ -377,6 +378,7 @@ func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus ch
 				return
 			}
 			bus <- rows
+			rows.Close()
 			mpc.cM.read(&queryType, &sleepTimeType, &data)
 			time.Sleep(time.Duration(data.(int)) * time.Millisecond)
 		}
@@ -394,7 +396,7 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 
 	stopMetricCompute := make(chan bool)
 	glog.V(1).Infof("Spawning computeMetric routine for queryType: %s", queryType)
-	go computeMetrics(queryType, rM, qWT, stopMetricCompute)
+	go computeMetrics(queryType, rM, qWT, msc.cM, stopMetricCompute)
 	startTime := time.Now()
 
 	var currentInstances interface{}
@@ -686,10 +688,10 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 	var desiredMetadata DesiredMetadata
 	var runMetadata RunMetadata
 	desiredMetadata.cpm = map[string]interface{}{
-		"create": createCPM,
-		"read":   readCPM,
-		"update": updateCPM,
-		"delete": deleteCPM,
+		"create": int(createCPM / 60),
+		"read":   int(readCPM / 60),
+		"update": int(updateCPM / 60),
+		"delete": int(deleteCPM / 60),
 	}
 	desiredMetadata.wT = make(map[string]interface{})
 	if createCPM == 0 {
