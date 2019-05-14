@@ -1,4 +1,4 @@
-# C4
+# B2
 
 ## Prep phase
 
