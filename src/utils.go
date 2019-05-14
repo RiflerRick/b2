@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -172,7 +173,67 @@ func getColSubset(colSelect map[string]bool, allowIDSelection bool, indexedCols 
 	}
 }
 
-func pollMetrics(metricPollTimePeriod int, rM RunMetadata, stopSignal chan bool) {
+func allMetricPoll(pollTick int, pubCM ControllerMetadata, subCM ControllerMetadata, dM DesiredMetadata, rM RunMetadata, stopSignal chan bool) {
+	breakLoop := false
+	for {
+		select {
+		case <-stopSignal:
+			breakLoop = true
+		default:
+			mpcCM := pollControllerMetrics(pubCM)
+			mscCM := pollControllerMetrics(subCM)
+			runMetadataCPM, runMetadataWT := pollMetrics(rM)
+			desiredMetadataCPM, desiredMetadataWT := pollMetrics(dM)
+			glog.V(0).Infof(" Desired: \tCPM:%v ; \tWT:%v\n", desiredMetadataCPM, desiredMetadataWT)
+			glog.V(0).Infof(" Run: \tCPM:%v, \tWT:%v\n", runMetadataCPM, runMetadataWT)
+			glog.V(0).Infof(" Publisher Instances: \t%v\n Subscriber Instances: \t%v\n", mpcCM, mscCM)
+			time.Sleep(time.Duration(pollTick) * time.Millisecond)
+		}
+		if breakLoop {
+			break
+		}
+	}
+
+}
+
+func pollControllerMetrics(cM ControllerMetadata) map[string]interface{} {
+
+	var createSubInstances interface{}
+	var readSubInstances interface{}
+	var updateSubInstances interface{}
+	var deleteSubInstances interface{}
+
+	var readPubInstances interface{}
+
+	var typeOfQuery string
+	var typeOfData string
+
+	data := make(map[string]interface{})
+
+	typeOfData = "instances"
+	if cM.controllerType == "publish" {
+		typeOfQuery = "read"
+		cM.read(&typeOfQuery, &typeOfData, &readPubInstances)
+		data["read"] = readPubInstances.(int)
+	} else {
+		typeOfQuery = "create"
+		cM.read(&typeOfQuery, &typeOfData, &createSubInstances)
+		typeOfQuery = "read"
+		cM.read(&typeOfQuery, &typeOfData, &readSubInstances)
+		typeOfQuery = "update"
+		cM.read(&typeOfQuery, &typeOfData, &updateSubInstances)
+		typeOfQuery = "delete"
+		cM.read(&typeOfQuery, &typeOfData, &deleteSubInstances)
+
+		data["create"] = createSubInstances.(int)
+		data["read"] = readSubInstances.(int)
+		data["update"] = updateSubInstances.(int)
+		data["delete"] = deleteSubInstances.(int)
+	}
+	return data
+}
+
+func pollMetrics(m Metadata) (map[string]interface{}, map[string]interface{}) {
 	var createCPM interface{}
 	var readCPM interface{}
 	var updateCPM interface{}
@@ -185,51 +246,96 @@ func pollMetrics(metricPollTimePeriod int, rM RunMetadata, stopSignal chan bool)
 
 	var typeOfQuery string
 	var typeOfData string
-	for {
-		select {
-		case <-stopSignal:
-			break
-		default:
-			typeOfData = "cpm"
-			glog.V(0).Info("Metrics from Run-Metdata")
-			typeOfQuery = "create"
 
-			rM.read(&typeOfQuery, &typeOfData, &createCPM)
-			typeOfQuery = "read"
-			rM.read(&typeOfQuery, &typeOfData, &readCPM)
-			typeOfQuery = "update"
-			rM.read(&typeOfQuery, &typeOfData, &updateCPM)
-			typeOfQuery = "delete"
-			rM.read(&typeOfQuery, &typeOfData, &deleteCPM)
+	cpm := make(map[string]interface{})
+	wt := make(map[string]interface{})
 
-			typeOfData = "wT"
-			typeOfQuery = "create"
-			rM.read(&typeOfQuery, &typeOfData, &createWT)
-			typeOfQuery = "read"
-			rM.read(&typeOfQuery, &typeOfData, &readWT)
-			typeOfQuery = "update"
-			rM.read(&typeOfQuery, &typeOfData, &updateWT)
-			typeOfQuery = "delete"
-			rM.read(&typeOfQuery, &typeOfData, &deleteWT)
+	typeOfData = "cpm"
+	typeOfQuery = "create"
 
-			glog.V(0).Infof("create : CPM: %d, WT: %d", createCPM.(int)*60, createWT.(int))
-			glog.V(0).Infof("read : CPM: %d, WT: %d", readCPM.(int)*60, readWT.(int))
-			glog.V(0).Infof("update : CPM: %d, WT: %d", updateCPM.(int)*60, updateWT.(int))
-			glog.V(0).Infof("delete : CPM: %d, WT: %d", deleteCPM.(int)*60, deleteWT.(int))
+	m.read(&typeOfQuery, &typeOfData, &createCPM)
+	typeOfQuery = "read"
+	m.read(&typeOfQuery, &typeOfData, &readCPM)
+	typeOfQuery = "update"
+	m.read(&typeOfQuery, &typeOfData, &updateCPM)
+	typeOfQuery = "delete"
+	m.read(&typeOfQuery, &typeOfData, &deleteCPM)
 
-			time.Sleep(time.Duration(metricPollTimePeriod) * time.Millisecond)
+	typeOfData = "wT"
+	typeOfQuery = "create"
+	m.read(&typeOfQuery, &typeOfData, &createWT)
+	typeOfQuery = "read"
+	m.read(&typeOfQuery, &typeOfData, &readWT)
+	typeOfQuery = "update"
+	m.read(&typeOfQuery, &typeOfData, &updateWT)
+	typeOfQuery = "delete"
+	m.read(&typeOfQuery, &typeOfData, &deleteWT)
+
+	cpm["create"] = createCPM.(int) * 60
+
+	val, ok := createWT.(int)
+	if !ok {
+		if reflect.TypeOf(createWT).String() == "float64" && math.IsInf(createWT.(float64), 1) {
+			wt["create"] = "Inf"
+		} else {
+			panic(ok)
 		}
+	} else {
+		wt["create"] = val
 	}
+
+	cpm["read"] = readCPM.(int) * 60
+
+	val, ok = readWT.(int)
+	if !ok {
+		if reflect.TypeOf(readWT).String() == "float64" && math.IsInf(readWT.(float64), 1) {
+			wt["create"] = "Inf"
+		} else {
+			panic(ok)
+		}
+	} else {
+		wt["read"] = val
+	}
+
+	cpm["update"] = updateCPM.(int) * 60
+
+	val, ok = updateWT.(int)
+	if !ok {
+		if reflect.TypeOf(updateWT).String() == "float64" && math.IsInf(updateWT.(float64), 1) {
+			wt["update"] = "Inf"
+		} else {
+			panic(ok)
+		}
+	} else {
+		wt["update"] = val
+	}
+
+	cpm["delete"] = deleteCPM.(int) * 60
+
+	val, ok = deleteWT.(int)
+	if !ok {
+		if reflect.TypeOf(deleteWT).String() == "float64" && math.IsInf(deleteWT.(float64), 1) {
+			wt["delete"] = "Inf"
+		} else {
+			panic(ok)
+		}
+	} else {
+		wt["delete"] = val
+	}
+
+	return cpm, wt
+
 }
 
 func computeMetrics(queryType string, rM RunMetadata, qWT chan int, cM ControllerMetadata, stopSignal chan bool) {
 	totalQExecuted := 0
 	totalWT := 0
 	startTime := time.Now()
+	breakLoop := false
 	for {
 		select {
 		case <-stopSignal:
-			break
+			breakLoop = true
 		default:
 			totalWT += <-qWT
 			timeElapsed := (time.Now()).Sub(startTime)
@@ -247,6 +353,9 @@ func computeMetrics(queryType string, rM RunMetadata, qWT chan int, cM Controlle
 
 			rM.write(&queryType, &cpmType, int(math.Round(float64(totalQExecuted)/timeElapsedSeconds)))
 			rM.write(&queryType, &wTType, int(math.Round(float64(totalWT/totalQExecuted))))
+		}
+		if breakLoop {
+			break
 		}
 	}
 }

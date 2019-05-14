@@ -291,9 +291,18 @@ func (msc MasterSubscribeController) downscale(queryType *string, dM DesiredMeta
 	}
 	// TODO: add a tolerance
 	// run wait time is greater than desired wait time
+
 	if rmWT > dmWT {
 		return true
 	}
+	// cpm := "cpm"
+	// var rmCPM interface{}
+	// var dmCPM interface{}
+	// dM.read(queryType, &cpm, &rmCPM)
+	// dM.read(queryType, &cpm, &dmCPM)
+	// if rmCPM.(int) > dmCPM.(int) {
+	// 	return true
+	// }
 	return false
 }
 
@@ -307,10 +316,11 @@ func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Ro
 	chunkSizeType := "chunk_size"
 	sleepTimeType := "sleep_time"
 	var data interface{}
+	breakLoop := false
 	for {
 		select {
 		case <-stopSignal:
-			break
+			breakLoop = true
 		case r = <-bus:
 			cols, _ := r.Columns()
 			for r.Next() {
@@ -347,6 +357,9 @@ func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Ro
 		default:
 			// bus should never be empty
 			busEmpty <- *queryType
+			breakLoop = true
+		}
+		if breakLoop {
 			break
 		}
 
@@ -365,10 +378,11 @@ func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus ch
 	queryType := "read"
 	chunkSizeType := "chunk_size"
 	sleepTimeType := "sleep_time"
+	breakLoop := false
 	for {
 		select {
 		case <-stopSignal:
-			break
+			breakLoop = true
 		default:
 			offset := r.Intn(*count)
 			mpc.cM.read(&queryType, &chunkSizeType, &data)
@@ -381,6 +395,9 @@ func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus ch
 			rows.Close()
 			mpc.cM.read(&queryType, &sleepTimeType, &data)
 			time.Sleep(time.Duration(data.(int)) * time.Millisecond)
+		}
+		if breakLoop {
+			break
 		}
 	}
 }
@@ -697,25 +714,25 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 	if createCPM == 0 {
 		desiredMetadata.wT["create"] = math.Inf(1)
 	} else {
-		desiredMetadata.wT["create"] = (60 / createCPM) * 1000 * 1000
+		desiredMetadata.wT["create"] = int((60.0 / float64(createCPM)) * 1000 * 1000)
 	}
 
 	if readCPM == 0 {
 		desiredMetadata.wT["read"] = math.Inf(1)
 	} else {
-		desiredMetadata.wT["read"] = (60 / readCPM) * 1000 * 1000
+		desiredMetadata.wT["read"] = int((60.0 / float64(readCPM)) * 1000 * 1000)
 	}
 
 	if updateCPM == 0 {
 		desiredMetadata.wT["update"] = math.Inf(1)
 	} else {
-		desiredMetadata.wT["update"] = (60 / updateCPM) * 1000 * 1000
+		desiredMetadata.wT["update"] = int((60.0 / float64(updateCPM)) * 1000 * 1000)
 	}
 
 	if deleteCPM == 0 {
 		desiredMetadata.wT["delete"] = math.Inf(1)
 	} else {
-		desiredMetadata.wT["delete"] = (60 / deleteCPM) * 1000 * 1000
+		desiredMetadata.wT["delete"] = int((60.0 / float64(deleteCPM)) * 1000 * 1000)
 	}
 
 	runMetadata.cpm = map[string]interface{}{
@@ -742,9 +759,10 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 	updateQWT := make(chan int)
 	deleteQWT := make(chan int)
 
-	stopPollSignal := make(chan bool)
-	glog.V(1).Infof("Starting pollMetrics routine")
-	go pollMetrics(metricPollTimePeriod, runMetadata, stopPollSignal)
+	stopPoll := make(chan bool)
+
+	glog.V(0).Info("Polling metrics:")
+	go allMetricPoll(metricPollTimePeriod, mpc.cM, msc.cM, desiredMetadata, runMetadata, stopPoll)
 
 	go glog.V(1).Info("Starting subscribers")
 	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, createQWT, &wg)
@@ -754,8 +772,8 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 	glog.V(1).Info("Waiting for MasterPublishController and MasterSubscribeController to finish")
 	wg.Wait()
 
-	glog.V(1).Info("Stoppinig pollMetrics routine")
-	stopPollSignal <- true
+	glog.V(1).Info("Stoppinig all metric poll")
+	stopPoll <- true
 
 }
 
