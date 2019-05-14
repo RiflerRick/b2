@@ -289,7 +289,7 @@ func pollMetrics(m Metadata) (map[string]interface{}, map[string]interface{}) {
 	val, ok = readWT.(int)
 	if !ok {
 		if reflect.TypeOf(readWT).String() == "float64" && math.IsInf(readWT.(float64), 1) {
-			wt["create"] = "Inf"
+			wt["read"] = "Inf"
 		} else {
 			panic(ok)
 		}
