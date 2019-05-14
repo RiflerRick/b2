@@ -25,7 +25,7 @@ type Transaction struct {
 	wt          int
 }
 
-func (q Query) executeRead(db *sql.DB, data ...interface{}) *sql.Rows {
+func (q *Query) executeRead(db *sql.DB, data ...interface{}) *sql.Rows {
 	/*
 		for executing normalized queries
 	*/
@@ -43,7 +43,7 @@ func (q Query) executeRead(db *sql.DB, data ...interface{}) *sql.Rows {
 	return rows
 }
 
-func (q Query) executeReadRow(db *sql.DB, data ...interface{}) *sql.Row {
+func (q *Query) executeReadRow(db *sql.DB, data ...interface{}) *sql.Row {
 	st := time.Now()
 	row := db.QueryRow(q.query, data...)
 	et := time.Now()
@@ -51,7 +51,7 @@ func (q Query) executeReadRow(db *sql.DB, data ...interface{}) *sql.Row {
 	return row
 }
 
-func (q Query) executeReadAsync(db *sql.DB, rowChan chan *sql.Rows, data ...interface{}) {
+func (q *Query) executeReadAsync(db *sql.DB, rowChan chan *sql.Rows, data ...interface{}) {
 	st := time.Now()
 	rows, err := db.Query(q.query, data...)
 	et := time.Now()
@@ -63,7 +63,7 @@ func (q Query) executeReadAsync(db *sql.DB, rowChan chan *sql.Rows, data ...inte
 	rowChan <- rows
 }
 
-func (q Query) executeReadRowAsync(db *sql.DB, rowChan chan *sql.Row, data ...interface{}) {
+func (q *Query) executeReadRowAsync(db *sql.DB, rowChan chan *sql.Row, data ...interface{}) {
 	st := time.Now()
 	row := db.QueryRow(q.query, data...)
 	et := time.Now()
@@ -71,7 +71,7 @@ func (q Query) executeReadRowAsync(db *sql.DB, rowChan chan *sql.Row, data ...in
 	rowChan <- row
 }
 
-func (q Query) executeWrite(db *sql.DB, data ...interface{}) {
+func (q *Query) executeWrite(db *sql.DB, data ...interface{}) {
 	st := time.Now()
 	_, err := db.Exec(q.query, data...)
 	et := time.Now()
@@ -81,7 +81,7 @@ func (q Query) executeWrite(db *sql.DB, data ...interface{}) {
 	q.wt = int(math.Round(et.Sub(st).Seconds() * 1000 * 1000))
 }
 
-func (t Transaction) commit() {
+func (t *Transaction) commit() {
 	st := time.Now()
 	err := t.transaction.Commit()
 	if err != nil {
@@ -91,7 +91,7 @@ func (t Transaction) commit() {
 	t.wt = int(math.Round(et.Sub(st).Seconds() * 1000 * 1000))
 }
 
-func (t Transaction) execute(query string, data ...interface{}) {
+func (t *Transaction) execute(query string, data ...interface{}) {
 	_, err := t.transaction.Exec(query, data...)
 	if err != nil {
 		glog.Fatal(err)
