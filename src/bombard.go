@@ -431,9 +431,10 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 
 	glog.V(0).Info("Polling metrics:")
 
-	timeSeries := make([]timeSeriesPoint, 3)
+	timeSeriesSize := 3
+	timeSeries := make([]timeSeriesPoint, timeSeriesSize)
 
-	go allMetricPoll(metricPollTimePeriod, timeSeries, mpc.cM, msc.cM, desiredMetadata, runMetadata, stopPoll)
+	go allMetricPoll(metricPollTimePeriod, timeSeries, mpc.cM, msc.cM, desiredMetadata, runMetadata, timeSeriesSize, stopPoll)
 
 	go glog.V(1).Info("Starting subscribers")
 	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, createQWT, &wg)

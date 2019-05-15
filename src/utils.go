@@ -173,7 +173,7 @@ func getColSubset(colSelect map[string]bool, allowIDSelection bool, indexedCols 
 	}
 }
 
-func allMetricPoll(pollTick int, timeSeries []timeSeriesPoint, pubCM ControllerMetadata, subCM ControllerMetadata, dM DesiredMetadata, rM RunMetadata, stopSignal chan bool) {
+func allMetricPoll(pollTick int, timeSeries []timeSeriesPoint, pubCM ControllerMetadata, subCM ControllerMetadata, dM DesiredMetadata, rM RunMetadata, timeSeriesSize int, stopSignal chan bool) {
 	breakLoop := false
 	for {
 		select {
@@ -192,7 +192,7 @@ func allMetricPoll(pollTick int, timeSeries []timeSeriesPoint, pubCM ControllerM
 			timeSeriesLen := len(timeSeries)
 			timeSeriesMutex.RUnlock()
 
-			if timeSeriesLen > 3 {
+			if timeSeriesLen > timeSeriesSize {
 				timeSeriesMutex.Lock()
 				timeSeries = append(timeSeries[1:], t)
 				timeSeriesMutex.Unlock()
