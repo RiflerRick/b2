@@ -19,41 +19,44 @@ func (mpc MasterPublishController) upscale(queryType *string, dM DesiredMetadata
 	return false
 }
 
-func (msc MasterSubscribeController) upscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
+func (msc MasterSubscribeController) balance(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) string {
 	typeOfData := "cpm"
 	var rCPM interface{}
 	var dCPM interface{}
 	rM.read(queryType, &typeOfData, &rCPM)
 	dM.read(queryType, &typeOfData, &dCPM)
-	if rCPM.(int) < dCPM.(int) {
-		return true
-	}
+
 	var avgDMWT interface{}
 	wT := "wT"
 	dM.read(queryType, &wT, &avgDMWT)
 	var avgRMWT interface{}
 	rM.read(queryType, &wT, &avgRMWT)
 	dmWT, ok := avgDMWT.(int)
+
 	if !ok {
 		// its possible the number is infinite which is of type float64
 		if reflect.TypeOf(avgDMWT).String() == "float64" && math.IsInf(avgDMWT.(float64), 1) {
-			return false
+			return "default"
 		}
 	}
 	rmWT, ok := avgRMWT.(int)
 	if !ok {
 		// its possible the number is infinite which is of type float64
 		if reflect.TypeOf(avgRMWT).String() == "float64" && math.IsInf(avgRMWT.(float64), 1) {
-			return false
+			return "default"
 		}
 	}
-	// TODO: add a tolerance
-	// run wait time is greater than desired wait time
 
-	if rmWT < dmWT {
-		return true
+	if rCPM.(int) < dCPM.(int) {
+		if rmWT < dmWT {
+			return "aggressiveUpscale"
+		}
+		return "mildDownscale"
 	}
-	return false
+	if rmWT < dmWT {
+		return "mildDownscale"
+	}
+	return "aggressiveDownscale"
 }
 
 func (mpc MasterPublishController) downscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
@@ -119,56 +122,15 @@ func (mpc MasterPublishController) downscale(queryType *string, dM DesiredMetada
 	return false
 }
 
-func (msc MasterSubscribeController) downscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
-	var avgDMWT interface{}
-	wT := "wT"
-	dM.read(queryType, &wT, &avgDMWT)
-	var avgRMWT interface{}
-	rM.read(queryType, &wT, &avgRMWT)
-	dmWT, ok := avgDMWT.(int)
-	if !ok {
-		// its possible the number is infinite which is of type float64
-		if reflect.TypeOf(avgDMWT).String() == "float64" && math.IsInf(avgDMWT.(float64), 1) {
-			return false
-		}
-	}
-	rmWT, ok := avgRMWT.(int)
-	if !ok {
-		// its possible the number is infinite which is of type float64
-		if reflect.TypeOf(avgRMWT).String() == "float64" && math.IsInf(avgRMWT.(float64), 1) {
-			return true
-		}
-	}
-	// TODO: add a tolerance
-	// run wait time is greater than desired wait time
-
-	if rmWT > dmWT {
-		return true
-	}
-
-	cpm := "cpm"
-	var rmCPM interface{}
-	var dmCPM interface{}
-	rM.read(queryType, &cpm, &rmCPM)
-	dM.read(queryType, &cpm, &dmCPM)
-	if rmCPM.(int) > dmCPM.(int) {
-		return true
-	}
-	return false
-}
-
 /*
 subscribe to bus for hitting the db. sleep decides how much to sleep in between queries
 queryTypeCPM: map storing the CPM values for each query. The type of query to be fired will be chosen by this CPM
 */
-func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Rows, indexedCols map[string]bool, allowMissingIndex map[string]bool, qWT chan int, busEmpty chan string, publisherSpawned chan bool, stopSignal chan bool) {
+func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Rows, indexedCols map[string]bool, allowMissingIndex map[string]bool, qWT chan int, busEmpty chan string, stopSignal chan bool) {
 	defer decInstances(*queryType, msc.cM)
 	incInstances(*queryType, msc.cM)
 	var r *sql.Rows
 	var q Query
-	chunkSizeType := "chunk_size"
-	sleepTimeType := "sleep_time"
-	var data interface{}
 	breakLoop := false
 	for {
 		select {
@@ -200,8 +162,8 @@ func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Ro
 					val := columnPointers[i].(*interface{})
 					colData[colName] = *val
 				}
-				msc.cM.read(queryType, &chunkSizeType, &data)
-				query, columnData := getQuery(queryType, msc.tableName, data.(int), colData, indexedCols, allowMissingIndex)
+
+				query, columnData := getQuery(queryType, msc.tableName, msc.getChunkSize(queryType), colData, indexedCols, allowMissingIndex)
 				if *queryType == "read" {
 					q.query = query
 					rows := q.executeRead(msc.db, columnData...)
@@ -212,14 +174,13 @@ func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Ro
 					q.executeWrite(msc.db, columnData...)
 					qWT <- q.wt
 				}
-				msc.cM.read(queryType, &sleepTimeType, &data)
-				time.Sleep(time.Millisecond * time.Duration(data.(int)))
+
+				time.Sleep(time.Millisecond * time.Duration(msc.getSleepTime(queryType)))
 			}
 			r.Close()
 		default:
 			// bus should never be empty
 			busEmpty <- *queryType
-			<-publisherSpawned
 		}
 		if breakLoop {
 			break
@@ -238,9 +199,6 @@ func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus ch
 	incInstances(queryType, mpc.cM)
 	source := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(source)
-	var data interface{}
-	chunkSizeType := "chunk_size"
-	sleepTimeType := "sleep_time"
 	breakLoop := false
 	for {
 		select {
@@ -248,15 +206,13 @@ func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus ch
 			breakLoop = true
 		default:
 			offset := r.Intn(*count)
-			mpc.cM.read(&queryType, &chunkSizeType, &data)
-			rows, err := mpc.db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", *(mpc.tableName), *startID, data.(int), offset))
+			rows, err := mpc.db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", *(mpc.tableName), *startID, mpc.getChunkSize(&queryType), offset))
 			if err != nil {
 				glog.Info(err)
 				return
 			}
 			bus <- rows
-			mpc.cM.read(&queryType, &sleepTimeType, &data)
-			time.Sleep(time.Duration(data.(int)) * time.Millisecond)
+			time.Sleep(time.Duration(mpc.getSleepTime(&queryType)) * time.Millisecond)
 		}
 		if breakLoop {
 			break
@@ -280,13 +236,12 @@ func incInstances(queryType string, m Metadata) {
 	m.write(&queryType, &typeOfData, currentInstances)
 }
 
-func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, busEmpty chan string, publisherSpawned chan bool, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup) {
+func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, busEmpty chan string, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	relaxationTimeInMS := 500
 	subscribeDontCare := false
-	var canUpscale bool
-	var canDownscale bool
+	var verdict string
 
 	maxSubscriberCountExpected := 100
 	subscriberStopSignal := make(chan bool, maxSubscriberCountExpected)
@@ -303,15 +258,24 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 		if (time.Now()).Sub(startTime).Minutes() > float64(timeToRun) {
 			break
 		}
-		canDownscale = msc.downscale(&queryType, dM, rM, &subscribeDontCare)
-		canUpscale = msc.upscale(&queryType, dM, rM, &subscribeDontCare)
+		verdict = msc.balance(&queryType, dM, rM, &subscribeDontCare)
 
-		if canUpscale {
-			glog.V(3).Info("upscaling subscriber instances by one")
-			go msc.bombard(&queryType, bus, indexedColumns, allowMissingIndex, qWT, busEmpty, publisherSpawned, subscriberStopSignal)
-		} else if canDownscale {
-			glog.V(3).Info("downscaling subscriber instances by one")
+		switch verdict {
+		case "aggressiveUpscale":
+			glog.V(3).Infof("upscaling subscriber instances by one for queryType: %s", queryType)
+			go msc.bombard(&queryType, bus, indexedColumns, allowMissingIndex, qWT, busEmpty, subscriberStopSignal)
+		case "aggressiveDownscale":
+			glog.V(3).Infof("downscaling subscriber instances by one for queryType: %s", queryType)
 			subscriberStopSignal <- true
+		case "mildDownscale":
+			// increase the sleep time
+			deltaSleepTime := 100
+			glog.V(3).Infof("increasing subscriber sleep time for queryType: %s by %d", queryType, deltaSleepTime)
+			currentSleepTime := msc.getSleepTime(&queryType)
+			msc.setSleepTime(&queryType, currentSleepTime+deltaSleepTime)
+		default:
+			glog.V(3).Infof("No decision taken for subscriber for queryType: %s", queryType)
+			break
 		}
 		time.Sleep(time.Duration(relaxationTimeInMS) * time.Millisecond)
 	}
@@ -324,7 +288,7 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 	stopMetricCompute <- true
 }
 
-func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, bus chan *sql.Rows, busEmpty chan string, publisherSpawned chan bool, wg *sync.WaitGroup, startID int, runChunk int) {
+func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, bus chan *sql.Rows, busEmpty chan string, wg *sync.WaitGroup, startID int, runChunk int) {
 	defer wg.Done()
 
 	relaxationTimeInMS := 500
@@ -361,7 +325,6 @@ func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM 
 				publisherStopSignal <- true
 			} else if canUpscale {
 				glog.V(3).Info("upscaling publisher instances by 1")
-				publisherSpawned <- true
 				mpc.cM.read(&queryType, &typeOfData, &currentInstances)
 				currentInstances = currentInstances.(int) + 1
 				mpc.cM.write(&queryType, &typeOfData, currentInstances)
@@ -378,34 +341,54 @@ func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM 
 	}
 }
 
-func (mpc MasterPublishController) getUpdatedChunkSize(queryType *string, rm RunMetadata, cm ControllerMetadata) int {
+func (mpc MasterPublishController) getChunkSize(queryType *string) int {
 	// TODO: more intelligence required
 	var chunkSize interface{}
 	typeOfData := "chunk_size"
-	cm.read(queryType, &typeOfData, &chunkSize)
+	mpc.cM.read(queryType, &typeOfData, &chunkSize)
 	return chunkSize.(int)
 }
 
-func (msc MasterSubscribeController) getUpdatedSleepTime(queryType *string, rm RunMetadata, cm ControllerMetadata) int {
+func (mpc MasterPublishController) getSleepTime(queryType *string) int {
 	// TODO: more intelligence required
 	var sleepTime interface{}
 	typeOfData := "sleep_time"
-	cm.read(queryType, &typeOfData, &sleepTime)
+	mpc.cM.read(queryType, &typeOfData, &sleepTime)
 	return sleepTime.(int)
 }
 
-func (msc MasterSubscribeController) getUpdatedChunkSize(queryType *string, rm RunMetadata, cm ControllerMetadata) int {
+func (mpc MasterPublishController) setChunkSize(queryType *string, data interface{}) {
+	typeOfData := "chunk_size"
+	mpc.cM.write(queryType, &typeOfData, data)
+}
+
+func (mpc MasterPublishController) setSleepTime(queryType *string, data interface{}) {
+	typeOfData := "sleep_time"
+	mpc.cM.write(queryType, &typeOfData, data)
+}
+
+func (msc MasterSubscribeController) getSleepTime(queryType *string) int {
+	// TODO: more intelligence required
+	var sleepTime interface{}
+	typeOfData := "sleep_time"
+	msc.cM.read(queryType, &typeOfData, &sleepTime)
+	return sleepTime.(int)
+}
+
+func (msc MasterSubscribeController) getChunkSize(queryType *string) int {
 	// TODO: more intelligence required
 	var chunkSize interface{}
 	typeOfData := "chunk_size"
-	cm.read(queryType, &typeOfData, &chunkSize)
+	msc.cM.read(queryType, &typeOfData, &chunkSize)
 	return chunkSize.(int)
 }
 
-func (mpc MasterPublishController) getUpdatedSleepTime(queryType *string, rm RunMetadata, cm ControllerMetadata) int {
-	// TODO: more intelligence required
-	var sleepTime interface{}
+func (msc MasterSubscribeController) setSleepTime(queryType *string, data interface{}) {
 	typeOfData := "sleep_time"
-	cm.read(queryType, &typeOfData, &sleepTime)
-	return sleepTime.(int)
+	msc.cM.write(queryType, &typeOfData, data)
+}
+
+func (msc MasterSubscribeController) setChunkSize(queryType *string, data interface{}) {
+	typeOfData := "chunk_size"
+	msc.cM.write(queryType, &typeOfData, data)
 }

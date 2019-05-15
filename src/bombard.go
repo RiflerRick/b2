@@ -142,6 +142,11 @@ var (
 	scmChunkSizeMutex map[string]*sync.RWMutex
 )
 
+type timeSeriesPoint struct {
+	cpm int
+	wT  int
+}
+
 /*
 DesiredMetadata will never change. contains calls per minute and wait time
 For each type, the keys of the map will be the querytypes
@@ -408,10 +413,12 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 	glog.V(1).Infof("Starting publishers")
 	var wg sync.WaitGroup
 	busEmpty := make(chan string)
-	publisherSpawned := make(chan bool)
+
 	bus := make(chan *sql.Rows)
+
 	wg.Add(5)
-	go mpc.run("read", desiredMetadata, runMetadata, time, bus, busEmpty, publisherSpawned, &wg, startID, count)
+
+	go mpc.run("read", desiredMetadata, runMetadata, time, bus, busEmpty, &wg, startID, count)
 
 	createQWT := make(chan int)
 	readQWT := make(chan int)
@@ -424,10 +431,10 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 	go allMetricPoll(metricPollTimePeriod, mpc.cM, msc.cM, desiredMetadata, runMetadata, stopPoll)
 
 	go glog.V(1).Info("Starting subscribers")
-	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, publisherSpawned, bus, createQWT, &wg)
-	go msc.run("read", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, publisherSpawned, bus, readQWT, &wg)
-	go msc.run("update", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, publisherSpawned, bus, updateQWT, &wg)
-	go msc.run("delete", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, publisherSpawned, bus, deleteQWT, &wg)
+	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, createQWT, &wg)
+	go msc.run("read", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, readQWT, &wg)
+	go msc.run("update", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, updateQWT, &wg)
+	go msc.run("delete", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, deleteQWT, &wg)
 	glog.V(1).Info("Waiting for MasterPublishController and MasterSubscribeController to finish")
 	wg.Wait()
 
