@@ -68,7 +68,7 @@ if currentCPM < desiredCPM {
         upscale the subscriber
     } else {
         // probably DB is slow
-        downscale the subscriber
+        increase the sleep Time of the subscriber (to bring WT)
     }
 } else {
     if currentWT < desiredWT {
