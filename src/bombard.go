@@ -34,12 +34,9 @@ import (
 	"flag"
 	"fmt"
 	"math"
-	"math/rand"
 	"os"
-	"reflect"
 	"strconv"
 	"sync"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang/glog"
@@ -74,72 +71,76 @@ type Metadata interface {
 // mutex cannot obviously be part of the resource being shared
 // TODO: instead of declaring variables of type sync.RWMutex, there must be a better way to do this
 
-var createDMCPMMutex sync.RWMutex
-var readDMCPMMutex sync.RWMutex
-var updateDMCPMMutex sync.RWMutex
-var deleteDMCPMMutex sync.RWMutex
+var (
+	createDMCPMMutex sync.RWMutex
+	readDMCPMMutex   sync.RWMutex
+	updateDMCPMMutex sync.RWMutex
+	deleteDMCPMMutex sync.RWMutex
 
-var createDMWTMutex sync.RWMutex
-var readDMWTMutex sync.RWMutex
-var updateDMWTMutex sync.RWMutex
-var deleteDMWTMutex sync.RWMutex
+	createDMWTMutex sync.RWMutex
+	readDMWTMutex   sync.RWMutex
+	updateDMWTMutex sync.RWMutex
+	deleteDMWTMutex sync.RWMutex
 
-var createRMCPMMutex sync.RWMutex
-var readRMCPMMutex sync.RWMutex
-var updateRMCPMMutex sync.RWMutex
-var deleteRMCPMMutex sync.RWMutex
+	createRMCPMMutex sync.RWMutex
+	readRMCPMMutex   sync.RWMutex
+	updateRMCPMMutex sync.RWMutex
+	deleteRMCPMMutex sync.RWMutex
 
-var createRMWTMutex sync.RWMutex
-var readRMWTMutex sync.RWMutex
-var updateRMWTMutex sync.RWMutex
-var deleteRMWTMutex sync.RWMutex
+	createRMWTMutex sync.RWMutex
+	readRMWTMutex   sync.RWMutex
+	updateRMWTMutex sync.RWMutex
+	deleteRMWTMutex sync.RWMutex
 
-// instances mutexes
-var createPCMInstancesMutex sync.RWMutex
-var readPCMInstancesMutex sync.RWMutex
-var updatePCMInstancesMutex sync.RWMutex
-var deletePCMInstancesMutex sync.RWMutex
+	// instances mutexes
+	createPCMInstancesMutex sync.RWMutex
+	readPCMInstancesMutex   sync.RWMutex
+	updatePCMInstancesMutex sync.RWMutex
+	deletePCMInstancesMutex sync.RWMutex
 
-var createSCMInstancesMutex sync.RWMutex
-var readSCMInstancesMutex sync.RWMutex
-var updateSCMInstancesMutex sync.RWMutex
-var deleteSCMInstancesMutex sync.RWMutex
+	createSCMInstancesMutex sync.RWMutex
+	readSCMInstancesMutex   sync.RWMutex
+	updateSCMInstancesMutex sync.RWMutex
+	deleteSCMInstancesMutex sync.RWMutex
 
-// sleep mutexes
-var createPCMSleepMutex sync.RWMutex
-var readPCMSleepMutex sync.RWMutex
-var updatePCMSleepMutex sync.RWMutex
-var deletePCMSleepMutex sync.RWMutex
+	// sleep mutexes
+	createPCMSleepMutex sync.RWMutex
+	readPCMSleepMutex   sync.RWMutex
+	updatePCMSleepMutex sync.RWMutex
+	deletePCMSleepMutex sync.RWMutex
 
-var createSCMSleepMutex sync.RWMutex
-var readSCMSleepMutex sync.RWMutex
-var updateSCMSleepMutex sync.RWMutex
-var deleteSCMSleepMutex sync.RWMutex
+	createSCMSleepMutex sync.RWMutex
+	readSCMSleepMutex   sync.RWMutex
+	updateSCMSleepMutex sync.RWMutex
+	deleteSCMSleepMutex sync.RWMutex
 
-// chunk mutexes
-var createPCMChunkMutex sync.RWMutex
-var readPCMChunkMutex sync.RWMutex
-var updatePCMChunkMutex sync.RWMutex
-var deletePCMChunkMutex sync.RWMutex
+	// chunk mutexes
+	createPCMChunkMutex sync.RWMutex
+	readPCMChunkMutex   sync.RWMutex
+	updatePCMChunkMutex sync.RWMutex
+	deletePCMChunkMutex sync.RWMutex
 
-var createSCMChunkMutex sync.RWMutex
-var readSCMChunkMutex sync.RWMutex
-var updateSCMChunkMutex sync.RWMutex
-var deleteSCMChunkMutex sync.RWMutex
+	createSCMChunkMutex sync.RWMutex
+	readSCMChunkMutex   sync.RWMutex
+	updateSCMChunkMutex sync.RWMutex
+	deleteSCMChunkMutex sync.RWMutex
+)
 
-var dmCPMMutex map[string]*sync.RWMutex
-var dmWTMutex map[string]*sync.RWMutex
+var (
+	dmCPMMutex map[string]*sync.RWMutex
+	dmWTMutex  map[string]*sync.RWMutex
 
-var rmCPMMutex map[string]*sync.RWMutex
-var rmWTMutex map[string]*sync.RWMutex
+	rmCPMMutex map[string]*sync.RWMutex
+	rmWTMutex  map[string]*sync.RWMutex
 
-var pcmInstancesMutex map[string]*sync.RWMutex
-var pcmSleepTimeMutex map[string]*sync.RWMutex
-var pcmChunkSizeMutex map[string]*sync.RWMutex
+	pcmInstancesMutex map[string]*sync.RWMutex
+	pcmSleepTimeMutex map[string]*sync.RWMutex
+	pcmChunkSizeMutex map[string]*sync.RWMutex
 
-var scmInstancesMutex map[string]*sync.RWMutex
-var scmSleepTimeMutex map[string]*sync.RWMutex
-var scmChunkSizeMutex map[string]*sync.RWMutex
+	scmInstancesMutex map[string]*sync.RWMutex
+	scmSleepTimeMutex map[string]*sync.RWMutex
+	scmChunkSizeMutex map[string]*sync.RWMutex
+)
 
 /*
 DesiredMetadata will never change. contains calls per minute and wait time
@@ -186,314 +187,6 @@ type MasterSubscribeController struct {
 	cM        ControllerMetadata
 	tableName *string
 	db        *sql.DB
-}
-
-func (mpc MasterPublishController) upscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
-	if *dontCare {
-		return true
-	}
-	return false
-}
-
-func (msc MasterSubscribeController) upscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
-	typeOfData := "cpm"
-	var rCPM interface{}
-	var dCPM interface{}
-	rM.read(queryType, &typeOfData, &rCPM)
-	dM.read(queryType, &typeOfData, &dCPM)
-	if rCPM.(int) < dCPM.(int) {
-		return true
-	}
-	return false
-}
-
-func (mpc MasterPublishController) downscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
-	cpm := "cpm"
-	var rmCPM interface{}
-	var dmCPM interface{}
-	rM.read(queryType, &cpm, &rmCPM)
-	dM.read(queryType, &cpm, &dmCPM)
-	if rmCPM.(int) > dmCPM.(int) {
-		return true
-	}
-	return false
-}
-
-func (msc MasterSubscribeController) downscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
-	var avgDMWT interface{}
-	wT := "wT"
-	dM.read(queryType, &wT, &avgDMWT)
-	var avgRMWT interface{}
-	rM.read(queryType, &wT, &avgRMWT)
-	dmWT, ok := avgDMWT.(int)
-	if !ok {
-		// its possible the number is infinite which is of type float64
-		if reflect.TypeOf(avgDMWT).String() == "float64" && math.IsInf(avgDMWT.(float64), 1) {
-			return false
-		}
-	}
-	rmWT, ok := avgRMWT.(int)
-	if !ok {
-		// its possible the number is infinite which is of type float64
-		if reflect.TypeOf(avgDMWT).String() == "float64" && math.IsInf(avgRMWT.(float64), 1) {
-			return true
-		}
-	}
-	// TODO: add a tolerance
-	// run wait time is greater than desired wait time
-
-	if rmWT > dmWT {
-		return true
-	}
-
-	cpm := "cpm"
-	var rmCPM interface{}
-	var dmCPM interface{}
-	rM.read(queryType, &cpm, &rmCPM)
-	dM.read(queryType, &cpm, &dmCPM)
-	if rmCPM.(int) > dmCPM.(int) {
-		return true
-	}
-	return false
-}
-
-/*
-subscribe to bus for hitting the db. sleep decides how much to sleep in between queries
-queryTypeCPM: map storing the CPM values for each query. The type of query to be fired will be chosen by this CPM
-*/
-func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Rows, indexedCols map[string]bool, allowMissingIndex map[string]bool, qWT chan int, busEmpty chan string, publisherSpawned chan bool, stopSignal chan bool) {
-	defer decInstances(*queryType, msc.cM)
-	incInstances(*queryType, msc.cM)
-	var r *sql.Rows
-	var q Query
-	chunkSizeType := "chunk_size"
-	sleepTimeType := "sleep_time"
-	var data interface{}
-	breakLoop := false
-	for {
-		select {
-		case <-stopSignal:
-			breakLoop = true
-		case r = <-bus:
-			cols, _ := r.Columns()
-			for r.Next() {
-				columns := make([]interface{}, len(cols))
-				columnPointers := make([]interface{}, len(cols))
-				for i := range columns {
-					columnPointers[i] = &columns[i]
-				}
-				err := r.Scan(columnPointers...)
-				if err != nil {
-					glog.Info(err)
-					return
-				}
-				colData := make(map[string]interface{})
-				for i, colName := range cols {
-					val := columnPointers[i].(*interface{})
-					colData[colName] = *val
-				}
-				msc.cM.read(queryType, &chunkSizeType, &data)
-				query, columnData := getQuery(queryType, msc.tableName, data.(int), colData, indexedCols, allowMissingIndex)
-				if *queryType == "read" {
-					q.query = query
-					rows := q.executeRead(msc.db, columnData...)
-					rows.Close()
-					qWT <- q.wt
-				} else {
-					q.query = query
-					q.executeWrite(msc.db, columnData...)
-					qWT <- q.wt
-				}
-				msc.cM.read(queryType, &sleepTimeType, &data)
-				time.Sleep(time.Millisecond * time.Duration(data.(int)))
-			}
-		default:
-			// bus should never be empty
-			busEmpty <- *queryType
-			<-publisherSpawned
-		}
-		if breakLoop {
-			break
-		}
-
-	}
-}
-
-/*
-	function to publish data to the bus after reading from the source db
-	to be called as a go routine. publishes data to the bus channel to be consumed by bombarding routines
-*/
-func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus chan *sql.Rows, stopSignal chan bool) {
-	queryType := "read"
-	defer decInstances(queryType, mpc.cM)
-	incInstances(queryType, mpc.cM)
-	source := rand.NewSource(time.Now().UnixNano())
-	r := rand.New(source)
-	var data interface{}
-	chunkSizeType := "chunk_size"
-	sleepTimeType := "sleep_time"
-	breakLoop := false
-	for {
-		select {
-		case <-stopSignal:
-			breakLoop = true
-		default:
-			offset := r.Intn(*count)
-			mpc.cM.read(&queryType, &chunkSizeType, &data)
-			rows, err := mpc.db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", *(mpc.tableName), *startID, data.(int), offset))
-			if err != nil {
-				glog.Info(err)
-				return
-			}
-			bus <- rows
-			// rows.Close()
-			mpc.cM.read(&queryType, &sleepTimeType, &data)
-			time.Sleep(time.Duration(data.(int)) * time.Millisecond)
-		}
-		if breakLoop {
-			break
-		}
-	}
-}
-
-func decInstances(queryType string, m Metadata) {
-	var currentInstances interface{}
-	typeOfData := "instances"
-	m.read(&queryType, &typeOfData, &currentInstances)
-	currentInstances = currentInstances.(int) - 1
-	m.write(&queryType, &typeOfData, currentInstances)
-}
-
-func incInstances(queryType string, m Metadata) {
-	var currentInstances interface{}
-	typeOfData := "instances"
-	m.read(&queryType, &typeOfData, &currentInstances)
-	currentInstances = currentInstances.(int) + 1
-	m.write(&queryType, &typeOfData, currentInstances)
-}
-
-func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, busEmpty chan string, publisherSpawned chan bool, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	relaxationTimeInMS := 500
-	subscribeDontCare := false
-	var canUpscale bool
-	var canDownscale bool
-	subscriberStopSignal := make(chan bool)
-
-	stopMetricCompute := make(chan bool)
-	glog.V(1).Infof("Spawning computeMetric routine for queryType: %s", queryType)
-	go computeMetrics(queryType, rM, qWT, msc.cM, stopMetricCompute)
-	startTime := time.Now()
-
-	var currentInstances interface{}
-	typeOfData := "instances"
-	for true {
-		if (time.Now()).Sub(startTime).Minutes() > float64(timeToRun) {
-			break
-		}
-		canDownscale = msc.downscale(&queryType, dM, rM, &subscribeDontCare)
-		canUpscale = msc.upscale(&queryType, dM, rM, &subscribeDontCare)
-
-		if canDownscale {
-			glog.V(3).Info("downscaling subscriber instances by one")
-			subscriberStopSignal <- true
-		} else if canUpscale {
-			glog.V(3).Info("upscaling subscriber instances by one")
-			go msc.bombard(&queryType, bus, indexedColumns, allowMissingIndex, qWT, busEmpty, publisherSpawned, subscriberStopSignal)
-		}
-		time.Sleep(time.Duration(relaxationTimeInMS) * time.Millisecond)
-	}
-	glog.V(1).Info("Tearing down all subscriber instances")
-	msc.cM.read(&queryType, &typeOfData, &currentInstances)
-	for i := 0; i < currentInstances.(int); i++ {
-		subscriberStopSignal <- true
-	}
-	glog.V(1).Info("Tearing down `computeMetrics` routine")
-	stopMetricCompute <- true
-}
-
-func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, bus chan *sql.Rows, busEmpty chan string, publisherSpawned chan bool, wg *sync.WaitGroup, startID int, runChunk int) {
-	defer wg.Done()
-
-	relaxationTimeInMS := 500
-
-	publishDontCare := false
-	var canUpscale bool
-	var canDownscale bool
-	publisherStopSignal := make(chan bool)
-	startTime := time.Now()
-	var currentInstances interface{}
-	typeOfData := "instances"
-	for true {
-		if (time.Now()).Sub(startTime).Minutes() > float64(timeToRun) {
-			break
-		}
-		select {
-		case <-busEmpty:
-			glog.V(3).Info("Bus found to be empty")
-			publishDontCare = true
-		default:
-			// in case the bus is empty, publish will happen only after one tick
-			canDownscale = mpc.downscale(&queryType, dM, rM, &publishDontCare)
-			canUpscale = mpc.upscale(&queryType, dM, rM, &publishDontCare)
-			publishDontCare = false
-
-			if canDownscale {
-				glog.V(3).Info("downscaling publisher instances by 1")
-				mpc.cM.read(&queryType, &typeOfData, &currentInstances)
-				currentInstances = currentInstances.(int) - 1
-				mpc.cM.write(&queryType, &typeOfData, currentInstances)
-				publisherStopSignal <- true
-			} else if canUpscale {
-				glog.V(3).Info("upscaling publisher instances by 1")
-				publisherSpawned <- true
-				mpc.cM.read(&queryType, &typeOfData, &currentInstances)
-				currentInstances = currentInstances.(int) + 1
-				mpc.cM.write(&queryType, &typeOfData, currentInstances)
-				go mpc.publishToBus(&startID, &runChunk, bus, publisherStopSignal)
-			}
-			// relax for a few milliseconds
-			time.Sleep(time.Duration(relaxationTimeInMS) * time.Millisecond)
-		}
-	}
-	glog.V(1).Info("Tearing down all publisher instances")
-	mpc.cM.read(&queryType, &typeOfData, &currentInstances)
-	for i := 0; i < currentInstances.(int); i++ {
-		publisherStopSignal <- true
-	}
-}
-
-func (mpc MasterPublishController) getUpdatedChunkSize(queryType *string, rm RunMetadata, cm ControllerMetadata) int {
-	// TODO: more intelligence required
-	var chunkSize interface{}
-	typeOfData := "chunk_size"
-	cm.read(queryType, &typeOfData, &chunkSize)
-	return chunkSize.(int)
-}
-
-func (msc MasterSubscribeController) getUpdatedSleepTime(queryType *string, rm RunMetadata, cm ControllerMetadata) int {
-	// TODO: more intelligence required
-	var sleepTime interface{}
-	typeOfData := "sleep_time"
-	cm.read(queryType, &typeOfData, &sleepTime)
-	return sleepTime.(int)
-}
-
-func (msc MasterSubscribeController) getUpdatedChunkSize(queryType *string, rm RunMetadata, cm ControllerMetadata) int {
-	// TODO: more intelligence required
-	var chunkSize interface{}
-	typeOfData := "chunk_size"
-	cm.read(queryType, &typeOfData, &chunkSize)
-	return chunkSize.(int)
-}
-
-func (mpc MasterPublishController) getUpdatedSleepTime(queryType *string, rm RunMetadata, cm ControllerMetadata) int {
-	// TODO: more intelligence required
-	var sleepTime interface{}
-	typeOfData := "sleep_time"
-	cm.read(queryType, &typeOfData, &sleepTime)
-	return sleepTime.(int)
 }
 
 /*
