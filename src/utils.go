@@ -173,7 +173,7 @@ func getColSubset(colSelect map[string]bool, allowIDSelection bool, indexedCols 
 	}
 }
 
-func allMetricPoll(pollTick int, pubCM ControllerMetadata, subCM ControllerMetadata, dM DesiredMetadata, rM RunMetadata, stopSignal chan bool) {
+func allMetricPoll(pollTick int, timeSeries []timeSeriesPoint, pubCM ControllerMetadata, subCM ControllerMetadata, dM DesiredMetadata, rM RunMetadata, stopSignal chan bool) {
 	breakLoop := false
 	for {
 		select {
@@ -184,6 +184,20 @@ func allMetricPoll(pollTick int, pubCM ControllerMetadata, subCM ControllerMetad
 			mscCM := pollControllerMetrics(subCM)
 			runMetadataCPM, runMetadataWT := pollMetrics(rM)
 			desiredMetadataCPM, desiredMetadataWT := pollMetrics(dM)
+
+			var t timeSeriesPoint
+			t.cpm = runMetadataCPM
+			t.wT = runMetadataWT
+			timeSeriesMutex.RLock()
+			timeSeriesLen := len(timeSeries)
+			timeSeriesMutex.RUnlock()
+
+			if timeSeriesLen > 3 {
+				timeSeriesMutex.Lock()
+				timeSeries = append(timeSeries[1:], t)
+				timeSeriesMutex.Unlock()
+			}
+
 			glog.V(0).Infof(" Desired: \tCPM:%v ; \tWT:%v\n", desiredMetadataCPM, desiredMetadataWT)
 			glog.V(0).Infof(" Run: \tCPM:%v, \tWT:%v\n", runMetadataCPM, runMetadataWT)
 			glog.V(0).Infof(" Publisher Instances: \t%v\n Subscriber Instances: \t%v\n", mpcCM, mscCM)

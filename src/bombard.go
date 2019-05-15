@@ -71,6 +71,8 @@ type Metadata interface {
 // mutex cannot obviously be part of the resource being shared
 // TODO: instead of declaring variables of type sync.RWMutex, there must be a better way to do this
 
+var timeSeriesMutex sync.RWMutex
+
 var (
 	createDMCPMMutex sync.RWMutex
 	readDMCPMMutex   sync.RWMutex
@@ -143,8 +145,8 @@ var (
 )
 
 type timeSeriesPoint struct {
-	cpm int
-	wT  int
+	cpm map[string]interface{}
+	wT  map[string]interface{}
 }
 
 /*
@@ -428,7 +430,10 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 	stopPoll := make(chan bool)
 
 	glog.V(0).Info("Polling metrics:")
-	go allMetricPoll(metricPollTimePeriod, mpc.cM, msc.cM, desiredMetadata, runMetadata, stopPoll)
+
+	timeSeries := make([]timeSeriesPoint, 3)
+
+	go allMetricPoll(metricPollTimePeriod, timeSeries, mpc.cM, msc.cM, desiredMetadata, runMetadata, stopPoll)
 
 	go glog.V(1).Info("Starting subscribers")
 	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, createQWT, &wg)
@@ -473,7 +478,6 @@ func main() {
 	tempTablePrepSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_PREP_SIZE_RATIO"), 32) // the ratio of the temp table size to the actual table size, this amount of data is copied
 	// to the temporary table from the new table
 	tempTableRunSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_RUN_SIZE_RATIO"), 32)
-	metricPollTimePeriod, _ := strconv.ParseInt(os.Getenv("METRIC_POLL_TIME_PERIOD_MS"), 10, 0)
 
 	if insertCommitsAfter == 0 {
 		defVal := 1000
@@ -509,11 +513,6 @@ func main() {
 		defVal := 100
 		glog.V(0).Infof("RUN_PHASE_SUBSCRIBE_SLEEP_TIME has not been set, defaulting to %d", defVal)
 		runPhaseSubscribeSleepTime = int64(defVal)
-	}
-	if metricPollTimePeriod == 0 {
-		defVal := 1000
-		glog.V(0).Infof("METRIC_POLL_TIME_PERIOD_MS has not been set, defaulting to %d", defVal)
-		metricPollTimePeriod = int64(defVal)
 	}
 
 	// TODO: this feature has not been added yet, once added uncomment this part
@@ -604,6 +603,8 @@ func main() {
 			"update": *allowMissingIndexUpdate,
 			"delete": *allowMissingIndexDelete,
 		}
+		metricPollTimePeriod := 1000 // this affects how upscaling and downscaling of subscribers happen
+
 		run(int(metricPollTimePeriod), int(runPhasePublishSleepTime), int(runPhaseSubscribeSleepTime), int(runPhasePublishChunkSize), 1, conn, expConn, *db, *table, allowMissingIndex, prepN, runN, *time, *createCPM, *readCPM, *updateCPM, *deleteCPM)
 
 	} else {

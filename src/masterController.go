@@ -240,6 +240,7 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 	defer wg.Done()
 
 	relaxationTimeInMS := 500
+
 	subscribeDontCare := false
 	var verdict string
 
