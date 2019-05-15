@@ -437,10 +437,10 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 	go allMetricPoll(metricPollTimePeriod, timeSeries, mpc.cM, msc.cM, desiredMetadata, runMetadata, timeSeriesSize, stopPoll)
 
 	go glog.V(1).Info("Starting subscribers")
-	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, createQWT, &wg)
-	go msc.run("read", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, readQWT, &wg)
-	go msc.run("update", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, updateQWT, &wg)
-	go msc.run("delete", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, deleteQWT, &wg)
+	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, busEmpty, bus, createQWT, &wg)
+	go msc.run("read", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, busEmpty, bus, readQWT, &wg)
+	go msc.run("update", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, busEmpty, bus, updateQWT, &wg)
+	go msc.run("delete", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, busEmpty, bus, deleteQWT, &wg)
 	glog.V(1).Info("Waiting for MasterPublishController and MasterSubscribeController to finish")
 	wg.Wait()
 

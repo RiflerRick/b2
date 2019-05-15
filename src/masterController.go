@@ -19,7 +19,7 @@ func (mpc MasterPublishController) upscale(queryType *string, dM DesiredMetadata
 	return false
 }
 
-func (msc MasterSubscribeController) balance(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) string {
+func (msc MasterSubscribeController) balance(queryType *string, dM DesiredMetadata, rM RunMetadata, timeSeries []timeSeriesPoint, dontCare *bool) string {
 	typeOfData := "cpm"
 	var rCPM interface{}
 	var dCPM interface{}
@@ -54,7 +54,13 @@ func (msc MasterSubscribeController) balance(queryType *string, dM DesiredMetada
 		return "mildDownscale"
 	}
 	if rmWT < dmWT {
-		return "mildDownscale"
+		data := getTimeSeriesCPM(queryType, timeSeries)
+		for i := range data {
+			if data[i].(int) < dCPM.(int) {
+				return "mildDownscale"
+			}
+		}
+		return "aggressiveDownscale"
 	}
 	return "aggressiveDownscale"
 }
@@ -236,7 +242,7 @@ func incInstances(queryType string, m Metadata) {
 	m.write(&queryType, &typeOfData, currentInstances)
 }
 
-func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, busEmpty chan string, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup) {
+func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, timeSeries []timeSeriesPoint, busEmpty chan string, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	relaxationTimeInMS := 500
@@ -259,7 +265,7 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 		if (time.Now()).Sub(startTime).Minutes() > float64(timeToRun) {
 			break
 		}
-		verdict = msc.balance(&queryType, dM, rM, &subscribeDontCare)
+		verdict = msc.balance(&queryType, dM, rM, timeSeries, &subscribeDontCare)
 
 		switch verdict {
 		case "aggressiveUpscale":

@@ -173,6 +173,26 @@ func getColSubset(colSelect map[string]bool, allowIDSelection bool, indexedCols 
 	}
 }
 
+func getTimeSeriesCPM(queryType *string, timeSeries []timeSeriesPoint) []interface{} {
+	var data []interface{}
+	timeSeriesMutex.RLock()
+	for _, v := range timeSeries {
+		data = append(data, v.cpm[*queryType])
+	}
+	timeSeriesMutex.RUnlock()
+	return data
+}
+
+func getTimeSeriesWT(queryType *string, timeSeries []timeSeriesPoint) []interface{} {
+	var data []interface{}
+	timeSeriesMutex.RLock()
+	for _, v := range timeSeries {
+		data = append(data, v.wT[*queryType])
+	}
+	timeSeriesMutex.RUnlock()
+	return data
+}
+
 func allMetricPoll(pollTick int, timeSeries []timeSeriesPoint, pubCM ControllerMetadata, subCM ControllerMetadata, dM DesiredMetadata, rM RunMetadata, timeSeriesSize int, stopSignal chan bool) {
 	breakLoop := false
 	for {
