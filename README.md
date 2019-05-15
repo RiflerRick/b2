@@ -59,8 +59,25 @@ If `y` > `x`, the `MasterPublishController` will issue a signal through the `sto
 
 The subscriber will be responsible for subscribing to the `bus` and bombarding the database with it. The crux of the bombarding routine is maintaining the CPM for each type of query.
 
-**Upscaling the subscriber instances**
-If the current CPM is less than the desired CPM for any query type, increase the number of subscriber instances for that query type. More intelligence can be later on provided for controlling the sleep time.
+**Balance the subscriber instances**
+
+```
+// for a particulat queryType
+if currentCPM < desiredCPM {
+    if currentWT < desiredWT {
+        upscale the subscriber
+    } else {
+        // probably DB is slow
+        downscale the subscriber
+    }
+} else {
+    if currentWT < desiredWT {
+        increase the sleep Time of the subscriber (to bring down CPM under control)
+    } else {
+        downscale the subscriber
+    }
+}
+```
 
 ```text
 improvements req: control sleep time
