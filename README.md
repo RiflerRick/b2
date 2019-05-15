@@ -72,7 +72,7 @@ if currentCPM < desiredCPM {
     }
 } else {
     if currentWT < desiredWT {
-        increase the sleep Time of the subscriber (to bring down CPM under control)
+        check the timeSeries, if the CPM was higher than desiredCPM for all 3 times, go for downscaling the subscriber otherwise increase the sleep Time of the subscriber (to bring down CPM under control)
     } else {
         downscale the subscriber
     }
