@@ -208,62 +208,12 @@ func (msc MasterSubscribeController) upscale(queryType *string, dM DesiredMetada
 }
 
 func (mpc MasterPublishController) downscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
-	sum := 0
-	var createVal interface{}
-	var readVal interface{}
-	var updateVal interface{}
-	var deleteVal interface{}
-	wT := "wT"
-	possibleQueryTypes := []string{"create", "read", "update", "delete"}
-	dM.read(&possibleQueryTypes[0], &wT, &createVal)
-	dM.read(&possibleQueryTypes[1], &wT, &readVal)
-	dM.read(&possibleQueryTypes[2], &wT, &updateVal)
-	dM.read(&possibleQueryTypes[3], &wT, &deleteVal)
-
-	createDM, ok := createVal.(int)
-	if !ok {
-		if reflect.TypeOf(createVal).String() == "float64" && math.IsInf(createVal.(float64), 1) {
-			return false
-		}
-		panic(ok)
-	}
-
-	readDM, ok := readVal.(int)
-	if !ok {
-		if reflect.TypeOf(readVal).String() == "float64" && math.IsInf(readVal.(float64), 1) {
-			return false
-		}
-		panic(ok)
-	}
-
-	updateDM, ok := updateVal.(int)
-	if !ok {
-		if reflect.TypeOf(updateVal).String() == "float64" && math.IsInf(updateVal.(float64), 1) {
-			return false
-		}
-		panic(ok)
-	}
-
-	deleteDM, ok := deleteVal.(int)
-	if !ok {
-		if reflect.TypeOf(deleteVal).String() == "float64" && math.IsInf(deleteVal.(float64), 1) {
-			return false
-		}
-		panic(ok)
-	}
-
-	sum = createDM + readDM + updateDM + deleteDM
-	avgDMWT := sum / 4
-	sum = 0
-	rM.read(&possibleQueryTypes[0], &wT, &createVal)
-	rM.read(&possibleQueryTypes[1], &wT, &readVal)
-	rM.read(&possibleQueryTypes[2], &wT, &updateVal)
-	rM.read(&possibleQueryTypes[3], &wT, &deleteVal)
-	sum = createVal.(int) + readVal.(int) + updateVal.(int) + deleteVal.(int)
-	avgRMWT := sum / 4
-	// TODO: add a tolerance
-	// run wait time is greater than desired wait time
-	if avgRMWT > avgDMWT {
+	cpm := "cpm"
+	var rmCPM interface{}
+	var dmCPM interface{}
+	rM.read(queryType, &cpm, &rmCPM)
+	dM.read(queryType, &cpm, &dmCPM)
+	if rmCPM.(int) > dmCPM.(int) {
 		return true
 	}
 	return false
@@ -295,14 +245,15 @@ func (msc MasterSubscribeController) downscale(queryType *string, dM DesiredMeta
 	if rmWT > dmWT {
 		return true
 	}
-	// cpm := "cpm"
-	// var rmCPM interface{}
-	// var dmCPM interface{}
-	// dM.read(queryType, &cpm, &rmCPM)
-	// dM.read(queryType, &cpm, &dmCPM)
-	// if rmCPM.(int) > dmCPM.(int) {
-	// 	return true
-	// }
+
+	cpm := "cpm"
+	var rmCPM interface{}
+	var dmCPM interface{}
+	rM.read(queryType, &cpm, &rmCPM)
+	dM.read(queryType, &cpm, &dmCPM)
+	if rmCPM.(int) > dmCPM.(int) {
+		return true
+	}
 	return false
 }
 
@@ -310,7 +261,9 @@ func (msc MasterSubscribeController) downscale(queryType *string, dM DesiredMeta
 subscribe to bus for hitting the db. sleep decides how much to sleep in between queries
 queryTypeCPM: map storing the CPM values for each query. The type of query to be fired will be chosen by this CPM
 */
-func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Rows, indexedCols map[string]bool, allowMissingIndex map[string]bool, qWT chan int, busEmpty chan string, stopSignal chan bool) {
+func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Rows, indexedCols map[string]bool, allowMissingIndex map[string]bool, qWT chan int, busEmpty chan string, publisherSpawned chan bool, stopSignal chan bool) {
+	defer decInstances(*queryType, msc.cM)
+	incInstances(*queryType, msc.cM)
 	var r *sql.Rows
 	var q Query
 	chunkSizeType := "chunk_size"
@@ -357,7 +310,7 @@ func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Ro
 		default:
 			// bus should never be empty
 			busEmpty <- *queryType
-			breakLoop = true
+			<-publisherSpawned
 		}
 		if breakLoop {
 			break
@@ -371,11 +324,12 @@ func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Ro
 	to be called as a go routine. publishes data to the bus channel to be consumed by bombarding routines
 */
 func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus chan *sql.Rows, stopSignal chan bool) {
-
+	queryType := "read"
+	defer decInstances(queryType, mpc.cM)
+	incInstances(queryType, mpc.cM)
 	source := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(source)
 	var data interface{}
-	queryType := "read"
 	chunkSizeType := "chunk_size"
 	sleepTimeType := "sleep_time"
 	breakLoop := false
@@ -392,7 +346,7 @@ func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus ch
 				return
 			}
 			bus <- rows
-			rows.Close()
+			// rows.Close()
 			mpc.cM.read(&queryType, &sleepTimeType, &data)
 			time.Sleep(time.Duration(data.(int)) * time.Millisecond)
 		}
@@ -402,7 +356,23 @@ func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus ch
 	}
 }
 
-func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, busEmpty chan string, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup) {
+func decInstances(queryType string, m Metadata) {
+	var currentInstances interface{}
+	typeOfData := "instances"
+	m.read(&queryType, &typeOfData, &currentInstances)
+	currentInstances = currentInstances.(int) - 1
+	m.write(&queryType, &typeOfData, currentInstances)
+}
+
+func incInstances(queryType string, m Metadata) {
+	var currentInstances interface{}
+	typeOfData := "instances"
+	m.read(&queryType, &typeOfData, &currentInstances)
+	currentInstances = currentInstances.(int) + 1
+	m.write(&queryType, &typeOfData, currentInstances)
+}
+
+func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, busEmpty chan string, publisherSpawned chan bool, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	relaxationTimeInMS := 500
@@ -427,16 +397,10 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 
 		if canDownscale {
 			glog.V(3).Info("downscaling subscriber instances by one")
-			msc.cM.read(&queryType, &typeOfData, &currentInstances)
-			currentInstances = currentInstances.(int) - 1
-			msc.cM.write(&queryType, &typeOfData, currentInstances)
 			subscriberStopSignal <- true
 		} else if canUpscale {
 			glog.V(3).Info("upscaling subscriber instances by one")
-			msc.cM.read(&queryType, &typeOfData, &currentInstances)
-			currentInstances = currentInstances.(int) + 1
-			msc.cM.write(&queryType, &typeOfData, currentInstances)
-			go msc.bombard(&queryType, bus, indexedColumns, allowMissingIndex, qWT, busEmpty, subscriberStopSignal)
+			go msc.bombard(&queryType, bus, indexedColumns, allowMissingIndex, qWT, busEmpty, publisherSpawned, subscriberStopSignal)
 		}
 		time.Sleep(time.Duration(relaxationTimeInMS) * time.Millisecond)
 	}
@@ -449,7 +413,7 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 	stopMetricCompute <- true
 }
 
-func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, bus chan *sql.Rows, busEmpty chan string, wg *sync.WaitGroup, startID int, runChunk int) {
+func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, bus chan *sql.Rows, busEmpty chan string, publisherSpawned chan bool, wg *sync.WaitGroup, startID int, runChunk int) {
 	defer wg.Done()
 
 	relaxationTimeInMS := 500
@@ -483,6 +447,7 @@ func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM 
 				publisherStopSignal <- true
 			} else if canUpscale {
 				glog.V(3).Info("upscaling publisher instances by 1")
+				publisherSpawned <- true
 				mpc.cM.read(&queryType, &typeOfData, &currentInstances)
 				currentInstances = currentInstances.(int) + 1
 				mpc.cM.write(&queryType, &typeOfData, currentInstances)
@@ -750,9 +715,10 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 	glog.V(1).Infof("Starting publishers")
 	var wg sync.WaitGroup
 	busEmpty := make(chan string)
+	publisherSpawned := make(chan bool)
 	bus := make(chan *sql.Rows)
 	wg.Add(5)
-	go mpc.run("read", desiredMetadata, runMetadata, time, bus, busEmpty, &wg, startID, count)
+	go mpc.run("read", desiredMetadata, runMetadata, time, bus, busEmpty, publisherSpawned, &wg, startID, count)
 
 	createQWT := make(chan int)
 	readQWT := make(chan int)
@@ -765,10 +731,10 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 	go allMetricPoll(metricPollTimePeriod, mpc.cM, msc.cM, desiredMetadata, runMetadata, stopPoll)
 
 	go glog.V(1).Info("Starting subscribers")
-	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, createQWT, &wg)
-	go msc.run("read", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, readQWT, &wg)
-	go msc.run("update", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, updateQWT, &wg)
-	go msc.run("delete", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, bus, deleteQWT, &wg)
+	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, publisherSpawned, bus, createQWT, &wg)
+	go msc.run("read", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, publisherSpawned, bus, readQWT, &wg)
+	go msc.run("update", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, publisherSpawned, bus, updateQWT, &wg)
+	go msc.run("delete", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, busEmpty, publisherSpawned, bus, deleteQWT, &wg)
 	glog.V(1).Info("Waiting for MasterPublishController and MasterSubscribeController to finish")
 	wg.Wait()
 
