@@ -55,6 +55,23 @@ func (e dbError) Error() string {
 }
 
 /*
+RunPhaseConfig is the configs supplied by the user for the run phase
+*/
+type RunPhaseConfig struct {
+	createCPM           interface{}
+	readCPM             interface{}
+	updateCPM           interface{}
+	deleteCPM           interface{}
+	publishChunkSize    interface{}
+	subscribeChunkSize  interface{}
+	publishSleepTime    interface{}
+	subscribeSleepTime  interface{}
+	timeSeriesTick      interface{}
+	timeSeriesSize      interface{}
+	pubSubComSignalSize interface{}
+}
+
+/*
 dM: desiredMetadata consisting of CPM, wT //this never changes
 rM: runMetadata consisting of CPM, wT (actual)
 cM: controllerMetadata consisting of instances_running, sleepTime and chunkSize
@@ -201,7 +218,7 @@ dM: desiredMetadata consisting of CPM, wT //this never changes
 rM: runMetadata consisting of CPM, wT (actual)
 cM: controllerMetadata consisting of instances_running, sleepTime and chunkSize
 */
-func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int, publishChunkSize int, subscribeChunkSize int, db *sql.DB, expDB *sql.DB, tableSchema string, tableName string, allowMissingIndex map[string]bool, prepN int, runN int, time int, createCPM int, readCPM int, updateCPM int, deleteCPM int) {
+func run(c RunPhaseConfig, db *sql.DB, expDB *sql.DB, tableSchema string, tableName string, allowMissingIndex map[string]bool, prepN int, runN int, time int) {
 	pcmInstancesMutex = map[string]*sync.RWMutex{
 		"create": &createPCMInstancesMutex,
 		"read":   &readPCMInstancesMutex,
@@ -285,16 +302,16 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 		"delete": 0,
 	}
 	mpc.cM.sleepTime = map[string]interface{}{
-		"create": publishSleepTime,
-		"read":   publishSleepTime,
-		"update": publishSleepTime,
-		"delete": publishSleepTime,
+		"create": c.publishSleepTime,
+		"read":   c.publishSleepTime,
+		"update": c.publishSleepTime,
+		"delete": c.publishSleepTime,
 	}
 	mpc.cM.chunkSize = map[string]interface{}{
-		"create": publishChunkSize,
-		"read":   publishChunkSize,
-		"update": publishChunkSize,
-		"delete": publishChunkSize,
+		"create": c.publishChunkSize,
+		"read":   c.publishChunkSize,
+		"update": c.publishChunkSize,
+		"delete": c.publishChunkSize,
 	}
 	msc.cM.instances = map[string]interface{}{
 		"create": 0,
@@ -310,16 +327,16 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 	msc.db = expDB
 
 	msc.cM.sleepTime = map[string]interface{}{
-		"create": subscribeSleepTime,
-		"read":   subscribeSleepTime,
-		"update": subscribeSleepTime,
-		"delete": subscribeSleepTime,
+		"create": c.subscribeSleepTime,
+		"read":   c.subscribeSleepTime,
+		"update": c.subscribeSleepTime,
+		"delete": c.subscribeSleepTime,
 	}
 	msc.cM.chunkSize = map[string]interface{}{
-		"create": subscribeChunkSize,
-		"read":   subscribeChunkSize,
-		"update": subscribeChunkSize,
-		"delete": subscribeChunkSize,
+		"create": c.subscribeChunkSize,
+		"read":   c.subscribeChunkSize,
+		"update": c.subscribeChunkSize,
+		"delete": c.subscribeChunkSize,
 	}
 
 	// get indexed columns
@@ -370,34 +387,34 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 	var desiredMetadata DesiredMetadata
 	var runMetadata RunMetadata
 	desiredMetadata.cpm = map[string]interface{}{
-		"create": int(createCPM / 60),
-		"read":   int(readCPM / 60),
-		"update": int(updateCPM / 60),
-		"delete": int(deleteCPM / 60),
+		"create": int(c.createCPM.(int) / 60),
+		"read":   int(c.readCPM.(int) / 60),
+		"update": int(c.updateCPM.(int) / 60),
+		"delete": int(c.deleteCPM.(int) / 60),
 	}
 	desiredMetadata.wT = make(map[string]interface{})
-	if createCPM == 0 {
+	if c.createCPM == 0 {
 		desiredMetadata.wT["create"] = math.Inf(1)
 	} else {
-		desiredMetadata.wT["create"] = int((60.0 / float64(createCPM)) * 1000 * 1000)
+		desiredMetadata.wT["create"] = int((60.0 / float64(c.createCPM.(int))) * 1000 * 1000)
 	}
 
-	if readCPM == 0 {
+	if c.readCPM == 0 {
 		desiredMetadata.wT["read"] = math.Inf(1)
 	} else {
-		desiredMetadata.wT["read"] = int((60.0 / float64(readCPM)) * 1000 * 1000)
+		desiredMetadata.wT["read"] = int((60.0 / float64(c.readCPM.(int))) * 1000 * 1000)
 	}
 
-	if updateCPM == 0 {
+	if c.updateCPM == 0 {
 		desiredMetadata.wT["update"] = math.Inf(1)
 	} else {
-		desiredMetadata.wT["update"] = int((60.0 / float64(updateCPM)) * 1000 * 1000)
+		desiredMetadata.wT["update"] = int((60.0 / float64(c.updateCPM.(int))) * 1000 * 1000)
 	}
 
-	if deleteCPM == 0 {
+	if c.deleteCPM == 0 {
 		desiredMetadata.wT["delete"] = math.Inf(1)
 	} else {
-		desiredMetadata.wT["delete"] = int((60.0 / float64(deleteCPM)) * 1000 * 1000)
+		desiredMetadata.wT["delete"] = int((60.0 / float64(c.deleteCPM.(int))) * 1000 * 1000)
 	}
 
 	runMetadata.cpm = map[string]interface{}{
@@ -420,7 +437,9 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 
 	wg.Add(5)
 
-	go mpc.run("read", desiredMetadata, runMetadata, time, bus, busEmpty, &wg, startID, count)
+	timeSeriesSize := int(c.timeSeriesSize.(int64))
+	timeSeries := make([]timeSeriesPoint, timeSeriesSize)
+	go mpc.run("read", desiredMetadata, runMetadata, time, bus, int(c.timeSeriesTick.(int64)), int(c.pubSubComSignalSize.(int64)), busEmpty, &wg, startID, count)
 
 	createQWT := make(chan int)
 	readQWT := make(chan int)
@@ -431,16 +450,13 @@ func run(metricPollTimePeriod int, publishSleepTime int, subscribeSleepTime int,
 
 	glog.V(0).Info("Polling metrics:")
 
-	timeSeriesSize := 3
-	timeSeries := make([]timeSeriesPoint, timeSeriesSize)
-
-	go allMetricPoll(metricPollTimePeriod, timeSeries, mpc.cM, msc.cM, desiredMetadata, runMetadata, timeSeriesSize, stopPoll)
+	go allMetricPoll(int(c.timeSeriesTick.(int64)), timeSeries, mpc.cM, msc.cM, desiredMetadata, runMetadata, timeSeriesSize, stopPoll)
 
 	go glog.V(1).Info("Starting subscribers")
-	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, busEmpty, bus, createQWT, &wg)
-	go msc.run("read", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, busEmpty, bus, readQWT, &wg)
-	go msc.run("update", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, busEmpty, bus, updateQWT, &wg)
-	go msc.run("delete", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, busEmpty, bus, deleteQWT, &wg)
+	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, int(c.timeSeriesTick.(int64)), int(c.pubSubComSignalSize.(int64)), busEmpty, bus, createQWT, &wg)
+	go msc.run("read", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, int(c.timeSeriesTick.(int64)), int(c.pubSubComSignalSize.(int64)), busEmpty, bus, readQWT, &wg)
+	go msc.run("update", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, int(c.timeSeriesTick.(int64)), int(c.pubSubComSignalSize.(int64)), busEmpty, bus, updateQWT, &wg)
+	go msc.run("delete", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, int(c.timeSeriesTick.(int64)), int(c.pubSubComSignalSize.(int64)), busEmpty, bus, deleteQWT, &wg)
 	glog.V(1).Info("Waiting for MasterPublishController and MasterSubscribeController to finish")
 	wg.Wait()
 
@@ -479,6 +495,9 @@ func main() {
 	tempTablePrepSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_PREP_SIZE_RATIO"), 32) // the ratio of the temp table size to the actual table size, this amount of data is copied
 	// to the temporary table from the new table
 	tempTableRunSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_RUN_SIZE_RATIO"), 32)
+	timeSeriesTick, _ := strconv.ParseInt(os.Getenv("TIME_SERIES_TICK_MS"), 10, 0)
+	timeSeriesSize, _ := strconv.ParseInt(os.Getenv("TIME_SERIES_SIZE"), 10, 0)
+	pubSubComSignalSize, _ := strconv.ParseInt(os.Getenv("PUB_SUB_COMM_SIGNAL_SIZE"), 10, 0)
 
 	if insertCommitsAfter == 0 {
 		defVal := 1000
@@ -514,6 +533,21 @@ func main() {
 		defVal := 100
 		glog.V(0).Infof("RUN_PHASE_SUBSCRIBE_SLEEP_TIME has not been set, defaulting to %d", defVal)
 		runPhaseSubscribeSleepTime = int64(defVal)
+	}
+	if timeSeriesTick == 0 {
+		defVal := 500
+		glog.V(0).Infof("TIME_SERIES_TICK_MS has not been set, defaulting to %d", defVal)
+		timeSeriesTick = int64(defVal)
+	}
+	if pubSubComSignalSize == 0 {
+		defVal := 100
+		glog.V(0).Infof("PUB_SUB_COMM_SIGNAL_SIZE has not been set, defaulting to %d", defVal)
+		pubSubComSignalSize = int64(pubSubComSignalSize)
+	}
+	if timeSeriesSize == 0 {
+		defVal := 3
+		glog.V(0).Infof("TIME_SERIES_SIZE has not been set, defaulting to %d", defVal)
+		timeSeriesSize = int64(timeSeriesSize)
 	}
 
 	// TODO: this feature has not been added yet, once added uncomment this part
@@ -604,9 +638,20 @@ func main() {
 			"update": *allowMissingIndexUpdate,
 			"delete": *allowMissingIndexDelete,
 		}
-		metricPollTimePeriod := 1000 // this affects how upscaling and downscaling of subscribers happen
+		var c RunPhaseConfig
+		c.createCPM = *createCPM
+		c.readCPM = *readCPM
+		c.updateCPM = *updateCPM
+		c.deleteCPM = *deleteCPM
+		c.publishChunkSize = int(runPhasePublishChunkSize)
+		c.publishSleepTime = int(runPhasePublishSleepTime)
+		c.subscribeChunkSize = 1
+		c.subscribeSleepTime = int(runPhaseSubscribeSleepTime)
+		c.timeSeriesTick = timeSeriesTick
+		c.pubSubComSignalSize = pubSubComSignalSize
+		c.timeSeriesSize = timeSeriesSize
 
-		run(int(metricPollTimePeriod), int(runPhasePublishSleepTime), int(runPhaseSubscribeSleepTime), int(runPhasePublishChunkSize), 1, conn, expConn, *db, *table, allowMissingIndex, prepN, runN, *time, *createCPM, *readCPM, *updateCPM, *deleteCPM)
+		run(c, conn, expConn, *db, *table, allowMissingIndex, prepN, runN, *time)
 
 	} else {
 		glog.V(0).Info("Neither prep nor run passed. Aborting!!!")

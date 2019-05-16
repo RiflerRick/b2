@@ -242,15 +242,16 @@ func incInstances(queryType string, m Metadata) {
 	m.write(&queryType, &typeOfData, currentInstances)
 }
 
-func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, timeSeries []timeSeriesPoint, busEmpty chan string, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup) {
+func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, timeSeries []timeSeriesPoint, timeSeriesTick int, pubSubComSignalSize int, busEmpty chan string, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	relaxationTimeInMS := 500
+	relaxationTimeInMS := timeSeriesTick + 200
 
 	subscribeDontCare := false
 	var verdict string
 
-	maxSubscriberCountExpected := 100
+	maxSubscriberCountExpected := pubSubComSignalSize
+
 	subscriberStopSignal := make(chan bool, maxSubscriberCountExpected)
 
 	stopMetricCompute := make(chan bool)
@@ -295,16 +296,17 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, r
 	stopMetricCompute <- true
 }
 
-func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, bus chan *sql.Rows, busEmpty chan string, wg *sync.WaitGroup, startID int, runChunk int) {
+func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, bus chan *sql.Rows, timeSeriesTick int, pubSubComSignalSize int, busEmpty chan string, wg *sync.WaitGroup, startID int, runChunk int) {
 	defer wg.Done()
 
-	relaxationTimeInMS := 500
+	relaxationTimeInMS := timeSeriesTick + 200
 
 	publishDontCare := false
 	var canUpscale bool
 	var canDownscale bool
 
-	maxPublisherCountExpected := 100
+	maxPublisherCountExpected := pubSubComSignalSize
+
 	publisherStopSignal := make(chan bool, maxPublisherCountExpected)
 
 	startTime := time.Now()
