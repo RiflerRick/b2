@@ -26,6 +26,8 @@ note: the `bus` is simply a channel of type
 
 ### Publisher
 
+**We would always be having one subscriber**
+
 The publisher is responsible for selecting rows from the original table and publishing to the bus. The chunk size of rows selected from the original table is controlled by `readChunkSize`. The `readChunkSize` is supplied as a pointer to the publisher instances by the `MasterPublishController`. The sleep time after each select query is also supplied as a pointer to the publisher instances by the `MasterPublishController`. The `MasterPublishController` will maintain a channel `stopSignal` of boolean type for signalling any publisher instance to stop.
 
 The `MasterPublishController` can control the rate of publishing data to the bus in 3 ways:
@@ -34,60 +36,33 @@ The `MasterPublishController` can control the rate of publishing data to the bus
 - Increasing/Decreasing the sleep time for every publisher
 - Increasing/Decreasing the readChunkSize of each publisher instance
 
-In any case, the bus cannot be empty, from the consumer instances, if the bus is empty, it sends the query type as a string to the channel that is received by the `MasterPublishController` and the `MasterSubscribeController`. The following parameters will be available at the disposal of the `MasterPublishController` to decide the what to do in case of such an incident:
+In any case, the bus cannot be empty, from the consumer instances, if the bus is empty, it sends the query type as a string to the channel that is received by the `MasterPublishController` and the `MasterSubscribeController`.
 
-- Number of publisher instances running
-- readChunkSize for each publish instance
-- sleepTime for each publish instance
-- the calls per minute value for each type of operation
-- the average wait time of the each type of operation
-- number of consumers instances running
+#### Upscaling the publisher instances
 
-**Upscaling the publisher instances**
 For now the straightforward solution is to simply spawn a new publish routine in case the any of the consumer instances notify that the bus is empty. Although later on more intelligence need to be provided when deciding the to do any of increasing/decreasing the number of publish instances, increasing/decreasing the sleep time for every publisher or increasing/decreasing the readChunkSize of each publisher instance.
 
 ```text
 improvements req: control sleep time, control readChunkSize
 ```
 
-**Downscaling the publisher instances**
-From the CPM for each query type it is possible to get the average wait time for each query type. For CRUD operations, lets assume, the average wait time for each operation is a,b,c and d respectively. We take the average of a,b,c and d. Let this be `x`.
-We also know the actual average wait times for each query type. Let these values be p,q,r and s respectively. We take the average of p,q,r and s. Let this be `y`
-If `y` > `x`, the `MasterPublishController` will issue a signal through the `stopSignal` channel. This will stop any one go routine
+#### Downscaling the publisher instances
 
-## Subscriber
+downscaling will be based on calls per minute(or unit time in that case), if the calls per unit time is more than required, it will attempt to downscale the publishers
 
-The subscriber will be responsible for subscribing to the `bus` and bombarding the database with it. The crux of the bombarding routine is maintaining the CPM for each type of query.
+## Metadata(wait time and calls per unit time) time series
 
-**Balance the subscriber instances**
+A metadata time series is maintained which records average wait time for queries of a particular queryType and average calls per unit time averaged over a `windowSize` time period. The `windowSize` is critical here as it makes sure, the calls per unit time and wait time values for the corresponding queryType does not get affected by momentary blips
 
-```
-// for a particulat queryType
-if currentCPM < desiredCPM {
-    if currentWT < desiredWT {
-        upscale the subscriber
-    } else {
-        // probably DB is slow
-        increase the sleep Time of the subscriber (to bring WT)
-    }
-} else {
-    if currentWT < desiredWT {
-        check the timeSeries, if the CPM was higher than desiredCPM for all 3 times, go for downscaling the subscriber otherwise increase the sleep Time of the subscriber (to bring down CPM under control)
-    } else {
-        downscale the subscriber
-    }
-}
-```
+### Subscriber
 
-```text
-improvements req: control sleep time
-```
+**We would always be having atleast one subscriber**
 
-**Downscaling the subscriber instances**
-From the CPM for each query type it is possible to get the average wait time for each query type. For CRUD operations, lets assume, the average wait time for one operation is `x`. We also know the actual average wait times for each query type. Let this value for a query_type be `y`
-If `y` > `x`, the `MasterSubscribeController` will issue a signal through the `stopSignal` channel. This will stop any one go routine.
+#### Upscaling and downscaling the subscriber instances
 
-**NOTE: In either the publisher or subscriber, incase of a conflict, downscaling will get the priority**
+Here we introduce 1 new parameter: `decisionWindow`.
+The `MasterSubscribeController` polls the Metadata time series every `decisionWindow` intervals. The `decisionWindow` would typically be a multiple of the metadata time series `windowSize`.
+The `MasterSubscriberController` gets the latest available CPM available in the metadata time series, it also gets the max of the wait times for the entire decision window, if the latest wait time in the metadata time series is more than this max wait time over the decision window, a `potentialDownscaleDecision` is taken. After this the latest CPM available is compared with the desired CPM, if the latest CPM is lower than the desiredCPM, a `potentialUpscaleDecision` is taken. A `potentialDownscaleDecision` is always preferred over a `potentialUpscaleDecision`.
 
 TODOs:
 
