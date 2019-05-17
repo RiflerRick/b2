@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -173,53 +172,26 @@ func getColSubset(colSelect map[string]bool, allowIDSelection bool, indexedCols 
 	}
 }
 
-func getTimeSeriesCPM(queryType *string, timeSeries []timeSeriesPoint) []interface{} {
-	var data []interface{}
-	timeSeriesMutex.RLock()
-	for _, v := range timeSeries {
-		data = append(data, v.cpm[*queryType])
-	}
-	timeSeriesMutex.RUnlock()
-	return data
-}
-
-func getTimeSeriesWT(queryType *string, timeSeries []timeSeriesPoint) []interface{} {
-	var data []interface{}
-	timeSeriesMutex.RLock()
-	for _, v := range timeSeries {
-		data = append(data, v.wT[*queryType])
-	}
-	timeSeriesMutex.RUnlock()
-	return data
-}
-
-func allMetricPoll(pollTick int, timeSeries []timeSeriesPoint, pubCM ControllerMetadata, subCM ControllerMetadata, dM DesiredMetadata, rM RunMetadata, timeSeriesSize int, stopSignal chan bool) {
+func allMetricPoll(pollTick int, pubCM ControllerMetadata, subCM ControllerMetadata, c MetadataTimeSeries, r MetadataTimeSeries, u MetadataTimeSeries, d MetadataTimeSeries, stopSignal chan bool) {
 	breakLoop := false
 	for {
 		select {
 		case <-stopSignal:
 			breakLoop = true
+			break
 		default:
 			mpcCM := pollControllerMetrics(pubCM)
 			mscCM := pollControllerMetrics(subCM)
-			runMetadataCPM, runMetadataWT := pollMetrics(rM)
-			desiredMetadataCPM, desiredMetadataWT := pollMetrics(dM)
 
-			var t timeSeriesPoint
-			t.cpm = runMetadataCPM
-			t.wT = runMetadataWT
-			timeSeriesMutex.RLock()
-			timeSeriesLen := len(timeSeries)
-			timeSeriesMutex.RUnlock()
+			cpm, wT := pollMetadataMetrics(c)
+			glog.V(0).Infof("create CPM: %d, create WT: %d", cpm, wT)
+			cpm, wT = pollMetadataMetrics(r)
+			glog.V(0).Infof("read CPM: %d, read WT: %d", cpm, wT)
+			cpm, wT = pollMetadataMetrics(u)
+			glog.V(0).Infof("update CPM: %d, update WT: %d", cpm, wT)
+			cpm, wT = pollMetadataMetrics(d)
+			glog.V(0).Infof("delete CPM: %d, delete WT: %d", cpm, wT)
 
-			if timeSeriesLen > timeSeriesSize {
-				timeSeriesMutex.Lock()
-				timeSeries = append(timeSeries[1:], t)
-				timeSeriesMutex.Unlock()
-			}
-
-			glog.V(0).Infof(" Desired: \tCPM:%v ; \tWT:%v\n", desiredMetadataCPM, desiredMetadataWT)
-			glog.V(0).Infof(" Run: \tCPM:%v, \tWT:%v\n", runMetadataCPM, runMetadataWT)
 			glog.V(0).Infof(" Publisher Instances: \t%v\n Subscriber Instances: \t%v\n", mpcCM, mscCM)
 			time.Sleep(time.Duration(pollTick) * time.Millisecond)
 		}
@@ -228,6 +200,14 @@ func allMetricPoll(pollTick int, timeSeries []timeSeriesPoint, pubCM ControllerM
 		}
 	}
 
+}
+
+func pollMetadataMetrics(timeSeries MetadataTimeSeries) (int, int) {
+	t, err := timeSeries.readLatest()
+	if err != nil {
+		return 0, 0
+	}
+	return t.cpm.(int), t.wT.(int)
 }
 
 func pollControllerMetrics(cM ControllerMetadata) map[string]interface{} {
@@ -267,126 +247,50 @@ func pollControllerMetrics(cM ControllerMetadata) map[string]interface{} {
 	return data
 }
 
-func pollMetrics(m Metadata) (map[string]interface{}, map[string]interface{}) {
-	var createCPM interface{}
-	var readCPM interface{}
-	var updateCPM interface{}
-	var deleteCPM interface{}
-
-	var createWT interface{}
-	var readWT interface{}
-	var updateWT interface{}
-	var deleteWT interface{}
-
-	var typeOfQuery string
-	var typeOfData string
-
-	cpm := make(map[string]interface{})
-	wt := make(map[string]interface{})
-
-	typeOfData = "cpm"
-	typeOfQuery = "create"
-
-	m.read(&typeOfQuery, &typeOfData, &createCPM)
-	typeOfQuery = "read"
-	m.read(&typeOfQuery, &typeOfData, &readCPM)
-	typeOfQuery = "update"
-	m.read(&typeOfQuery, &typeOfData, &updateCPM)
-	typeOfQuery = "delete"
-	m.read(&typeOfQuery, &typeOfData, &deleteCPM)
-
-	typeOfData = "wT"
-	typeOfQuery = "create"
-	m.read(&typeOfQuery, &typeOfData, &createWT)
-	typeOfQuery = "read"
-	m.read(&typeOfQuery, &typeOfData, &readWT)
-	typeOfQuery = "update"
-	m.read(&typeOfQuery, &typeOfData, &updateWT)
-	typeOfQuery = "delete"
-	m.read(&typeOfQuery, &typeOfData, &deleteWT)
-
-	cpm["create"] = createCPM.(int) * 60
-
-	val, ok := createWT.(int)
-	if !ok {
-		if reflect.TypeOf(createWT).String() == "float64" && math.IsInf(createWT.(float64), 1) {
-			wt["create"] = "Inf"
-		} else {
-			panic(ok)
-		}
-	} else {
-		wt["create"] = val
-	}
-
-	cpm["read"] = readCPM.(int) * 60
-
-	val, ok = readWT.(int)
-	if !ok {
-		if reflect.TypeOf(readWT).String() == "float64" && math.IsInf(readWT.(float64), 1) {
-			wt["read"] = "Inf"
-		} else {
-			panic(ok)
-		}
-	} else {
-		wt["read"] = val
-	}
-
-	cpm["update"] = updateCPM.(int) * 60
-
-	val, ok = updateWT.(int)
-	if !ok {
-		if reflect.TypeOf(updateWT).String() == "float64" && math.IsInf(updateWT.(float64), 1) {
-			wt["update"] = "Inf"
-		} else {
-			panic(ok)
-		}
-	} else {
-		wt["update"] = val
-	}
-
-	cpm["delete"] = deleteCPM.(int) * 60
-
-	val, ok = deleteWT.(int)
-	if !ok {
-		if reflect.TypeOf(deleteWT).String() == "float64" && math.IsInf(deleteWT.(float64), 1) {
-			wt["delete"] = "Inf"
-		} else {
-			panic(ok)
-		}
-	} else {
-		wt["delete"] = val
-	}
-
-	return cpm, wt
-
+func pushToTimeSeries(timeSeries MetadataTimeSeries, cpm int, wT int) error {
+	var t timeSeriesPoint
+	t.cpm = cpm
+	t.wT = wT
+	return timeSeries.write(t)
 }
 
-func computeMetrics(queryType string, rM RunMetadata, qWT chan int, cM ControllerMetadata, stopSignal chan bool) {
+func computeMetrics(queryType string, timeSeriesTick int, timeSeries MetadataTimeSeries, qWT chan int, stopSignal chan bool, metricSynced chan bool) {
 	totalQExecuted := 0
 	totalWT := 0
-	startTime := time.Now()
 	breakLoop := false
+	cpm := 0
+	wT := 0
+
+	syncTimeSeriesControlCounter := 0
+
+	startTime := time.Now()
 	for {
 		select {
 		case <-stopSignal:
 			breakLoop = true
+			break
 		default:
-			totalWT += <-qWT
 			timeElapsed := (time.Now()).Sub(startTime)
-			timeElapsedSeconds := timeElapsed.Seconds()
-			cpmType := "cpm"
-			wTType := "wT"
-			// var cMInstances interface{}
-			// cMInstancesType := "instances"
-			// cM.read(&queryType, &cMInstancesType, &cMInstances)
-			// fmt.Printf("instances for subscribe queryType: %s is %d\n", queryType, cMInstances)
-
+			if int(int(timeElapsed.Seconds()*1000)/timeSeriesTick) > syncTimeSeriesControlCounter {
+				glog.V(2).Infof("syncing CPM and WT to timeSeries")
+				err := pushToTimeSeries(timeSeries, cpm, wT)
+				if err != nil {
+					glog.V(3).Infof("Could not push to timeSeries")
+					return
+				}
+				syncTimeSeriesControlCounter++
+				totalQExecuted = 0
+				totalWT = 0
+				cpm = 0
+				wT = 0
+				metricSynced <- true
+			}
+			totalWT += <-qWT
 			totalQExecuted++
 
-			// fmt.Printf("CPM now: %d\n", int(math.Round(float64(totalQExecuted)/timeElapsedSeconds)))
-
-			rM.write(&queryType, &cpmType, int(math.Round(float64(totalQExecuted)/timeElapsedSeconds)))
-			rM.write(&queryType, &wTType, int(math.Round(float64(totalWT/totalQExecuted))))
+			timeElapsedSeconds := timeElapsed.Seconds()
+			cpm = int(math.Round(float64(totalQExecuted) / timeElapsedSeconds))
+			wT = int(math.Round(float64(totalWT / totalQExecuted)))
 		}
 		if breakLoop {
 			break

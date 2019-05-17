@@ -3,138 +3,72 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"math"
 	"math/rand"
-	"reflect"
 	"sync"
 	"time"
 
 	"github.com/golang/glog"
 )
 
-func (mpc MasterPublishController) upscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
+func (mpc MasterPublishController) upscale(queryType *string, dM DesiredMetadata, dontCare *bool) bool {
 	if *dontCare {
 		return true
 	}
 	return false
 }
 
-func (msc MasterSubscribeController) balance(queryType *string, dM DesiredMetadata, rM RunMetadata, timeSeries []timeSeriesPoint, dontCare *bool) string {
-	typeOfData := "cpm"
-	var rCPM interface{}
-	var dCPM interface{}
-	rM.read(queryType, &typeOfData, &rCPM)
-	dM.read(queryType, &typeOfData, &dCPM)
-
-	var avgDMWT interface{}
-	wT := "wT"
-	dM.read(queryType, &wT, &avgDMWT)
-	var avgRMWT interface{}
-	rM.read(queryType, &wT, &avgRMWT)
-	dmWT, ok := avgDMWT.(int)
-
-	if !ok {
-		// its possible the number is infinite which is of type float64
-		if reflect.TypeOf(avgDMWT).String() == "float64" && math.IsInf(avgDMWT.(float64), 1) {
-			return "default"
-		}
-	}
-	rmWT, ok := avgRMWT.(int)
-	if !ok {
-		// its possible the number is infinite which is of type float64
-		if reflect.TypeOf(avgRMWT).String() == "float64" && math.IsInf(avgRMWT.(float64), 1) {
-			return "default"
-		}
-	}
-
-	if rCPM.(int) < dCPM.(int) {
-		if rmWT < dmWT {
-			return "aggressiveUpscale"
-		}
-		return "mildDownscale"
-	}
-	if rmWT < dmWT {
-		data := getTimeSeriesCPM(queryType, timeSeries)
-		for i := range data {
-			if data[i].(int) < dCPM.(int) {
-				return "mildDownscale"
-			}
-		}
-		return "aggressiveDownscale"
-	}
-	return "aggressiveDownscale"
-}
-
-func (mpc MasterPublishController) downscale(queryType *string, dM DesiredMetadata, rM RunMetadata, dontCare *bool) bool {
-	// TODO: needs to be worked upon
-	sum := 0
-	var createVal interface{}
-	var readVal interface{}
-	var updateVal interface{}
-	var deleteVal interface{}
-	wT := "wT"
-	possibleQueryTypes := []string{"create", "read", "update", "delete"}
-	dM.read(&possibleQueryTypes[0], &wT, &createVal)
-	dM.read(&possibleQueryTypes[1], &wT, &readVal)
-	dM.read(&possibleQueryTypes[2], &wT, &updateVal)
-	dM.read(&possibleQueryTypes[3], &wT, &deleteVal)
-
-	createDM, ok := createVal.(int)
-	if !ok {
-		if reflect.TypeOf(createVal).String() == "float64" && math.IsInf(createVal.(float64), 1) {
-			return false
-		}
-		panic(ok)
-	}
-
-	readDM, ok := readVal.(int)
-	if !ok {
-		if reflect.TypeOf(readVal).String() == "float64" && math.IsInf(readVal.(float64), 1) {
-			return false
-		}
-		panic(ok)
-	}
-
-	updateDM, ok := updateVal.(int)
-	if !ok {
-		if reflect.TypeOf(updateVal).String() == "float64" && math.IsInf(updateVal.(float64), 1) {
-			return false
-		}
-		panic(ok)
-	}
-
-	deleteDM, ok := deleteVal.(int)
-	if !ok {
-		if reflect.TypeOf(deleteVal).String() == "float64" && math.IsInf(deleteVal.(float64), 1) {
-			return false
-		}
-		panic(ok)
-	}
-
-	sum = createDM + readDM + updateDM + deleteDM
-	avgDMWT := sum / 4
-	sum = 0
-	rM.read(&possibleQueryTypes[0], &wT, &createVal)
-	rM.read(&possibleQueryTypes[1], &wT, &readVal)
-	rM.read(&possibleQueryTypes[2], &wT, &updateVal)
-	rM.read(&possibleQueryTypes[3], &wT, &deleteVal)
-	sum = createVal.(int) + readVal.(int) + updateVal.(int) + deleteVal.(int)
-	avgRMWT := sum / 4
-	// TODO: add a tolerance
-	// run wait time is greater than desired wait time
-	if avgRMWT > avgDMWT {
+func (mpc MasterPublishController) downscale(queryType *string, dM DesiredMetadata, dontCare *bool) bool {
+	if *dontCare {
 		return true
 	}
 	return false
 }
 
-/*
-subscribe to bus for hitting the db. sleep decides how much to sleep in between queries
-queryTypeCPM: map storing the CPM values for each query. The type of query to be fired will be chosen by this CPM
-*/
-func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Rows, indexedCols map[string]bool, allowMissingIndex map[string]bool, qWT chan int, busEmpty chan string, stopSignal chan bool) {
-	defer decInstances(*queryType, msc.cM)
-	incInstances(*queryType, msc.cM)
+func (msc MasterSubscribeController) upscale(queryType *string, dM DesiredMetadata, m MetadataTimeSeries, decisionWindow int, dontCare *bool) bool {
+	if *dontCare {
+		return true
+	}
+	t, err := m.readLatest()
+	if err != nil {
+		// expecting this error to be 0 length
+		return false
+	}
+	currentCPM := t.cpm.(int)
+	var desiredCPM interface{}
+	typeOfData := "cpm"
+	dM.read(queryType, &typeOfData, &desiredCPM)
+	if currentCPM < desiredCPM.(int) {
+		return true
+	}
+	return false
+}
+
+func (msc MasterSubscribeController) downscale(queryType *string, dM DesiredMetadata, m MetadataTimeSeries, decisionWindow int, dontCare *bool) bool {
+	if *dontCare {
+		return true
+	}
+	t, err := m.readLatest()
+	if err != nil {
+		return false
+	}
+	currentWT := t.wT.(int)
+	maxWT, err := m.getMaxWT(decisionWindow)
+	if err != nil {
+		// expecting this error to be 0 length
+		return false
+	}
+	if currentWT > maxWT {
+		return true
+	}
+	return false
+}
+
+func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Rows, indexedCols map[string]bool, allowMissingIndex map[string]bool, qWT chan int, busEmpty chan string, maintainMinSubscribers chan bool, stopSignal chan bool) {
+
+	stopSubscriberDontCare := false
+
+	defer decInstances(*queryType, msc.cM, maintainMinSubscribers, stopSubscriberDontCare)
+	incInstances(*queryType, msc.cM, false)
 	var r *sql.Rows
 	var q Query
 	breakLoop := false
@@ -146,6 +80,7 @@ func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Ro
 				select {
 				case <-stopSignal:
 					breakLoop = true
+					stopSubscriberDontCare = true
 					break
 				default:
 					break
@@ -199,10 +134,11 @@ func (msc MasterSubscribeController) bombard(queryType *string, bus chan *sql.Ro
 	function to publish data to the bus after reading from the source db
 	to be called as a go routine. publishes data to the bus channel to be consumed by bombarding routines
 */
-func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus chan *sql.Rows, stopSignal chan bool) {
+func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus chan *sql.Rows, maintainMinPublishers chan bool, stopSignal chan bool) {
 	queryType := "read"
-	defer decInstances(queryType, mpc.cM)
-	incInstances(queryType, mpc.cM)
+	stopPublisherDontCare := false
+	defer decInstances(queryType, mpc.cM, maintainMinPublishers, stopPublisherDontCare)
+	incInstances(queryType, mpc.cM, false)
 	source := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(source)
 	breakLoop := false
@@ -226,15 +162,19 @@ func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus ch
 	}
 }
 
-func decInstances(queryType string, m Metadata) {
-	var currentInstances interface{}
+func decInstances(queryType string, m Metadata, maintainMinPubSub chan bool, dontCare bool) {
+	minSubInstances := 1
 	typeOfData := "instances"
+	var currentInstances interface{}
 	m.read(&queryType, &typeOfData, &currentInstances)
+	if (currentInstances.(int) < minSubInstances) && !dontCare {
+		maintainMinPubSub <- true
+	}
 	currentInstances = currentInstances.(int) - 1
 	m.write(&queryType, &typeOfData, currentInstances)
 }
 
-func incInstances(queryType string, m Metadata) {
+func incInstances(queryType string, m Metadata, dontCare bool) {
 	var currentInstances interface{}
 	typeOfData := "instances"
 	m.read(&queryType, &typeOfData, &currentInstances)
@@ -242,108 +182,114 @@ func incInstances(queryType string, m Metadata) {
 	m.write(&queryType, &typeOfData, currentInstances)
 }
 
-func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, timeSeries []timeSeriesPoint, timeSeriesTick int, pubSubComSignalSize int, busEmpty chan string, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup) {
+func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, timeSeries MetadataTimeSeries, timeSeriesTick int, pubSubComSignalSize int, busEmpty chan string, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	relaxationTimeInMS := timeSeriesTick + 200
+	subscribeUpscaleDontCare := false
+	subscribeDownscaleDontCare := false
 
-	subscribeDontCare := false
-	var verdict string
-
-	maxSubscriberCountExpected := pubSubComSignalSize
-
-	subscriberStopSignal := make(chan bool, maxSubscriberCountExpected)
+	subscriberStopSignal := make(chan bool, pubSubComSignalSize)
 
 	stopMetricCompute := make(chan bool)
+	maintainMinSubscribers := make(chan bool)
+
+	metricSynced := make(chan bool)
 
 	glog.V(1).Infof("Spawning computeMetric routine for queryType: %s", queryType)
-	go computeMetrics(queryType, rM, qWT, msc.cM, stopMetricCompute)
+	go computeMetrics(queryType, timeSeriesTick, timeSeries, qWT, stopMetricCompute, metricSynced)
 	startTime := time.Now()
 
-	var currentInstances interface{}
-	typeOfData := "instances"
 	for true {
 		if (time.Now()).Sub(startTime).Minutes() > float64(timeToRun) {
 			break
 		}
-		verdict = msc.balance(&queryType, dM, rM, timeSeries, &subscribeDontCare)
-
-		switch verdict {
-		case "aggressiveUpscale":
-			glog.V(3).Infof("upscaling subscriber instances by one for queryType: %s", queryType)
-			go msc.bombard(&queryType, bus, indexedColumns, allowMissingIndex, qWT, busEmpty, subscriberStopSignal)
-		case "aggressiveDownscale":
-			glog.V(3).Infof("downscaling subscriber instances by one for queryType: %s", queryType)
-			subscriberStopSignal <- true
-		case "mildDownscale":
-			// increase the sleep time
-			deltaSleepTime := 100
-			glog.V(3).Infof("increasing subscriber sleep time for queryType: %s by %d", queryType, deltaSleepTime)
-			currentSleepTime := msc.getSleepTime(&queryType)
-			msc.setSleepTime(&queryType, currentSleepTime+deltaSleepTime)
+		// waiting for metrics to be synced
+		<-metricSynced
+		// select for maintainMinSubscribers
+		select {
+		case <-maintainMinSubscribers:
+			subscribeUpscaleDontCare = true
+			break
 		default:
-			glog.V(3).Infof("No decision taken for subscriber for queryType: %s", queryType)
 			break
 		}
-		time.Sleep(time.Duration(relaxationTimeInMS) * time.Millisecond)
+		canDownscale := msc.downscale(&queryType, dM, timeSeries, 20, &subscribeDownscaleDontCare)
+		canUpscale := msc.upscale(&queryType, dM, timeSeries, 20, &subscribeUpscaleDontCare)
+
+		if canDownscale && !subscribeUpscaleDontCare {
+			glog.V(3).Info("downscaling subscriber instances by 1")
+			subscriberStopSignal <- true
+		} else if canUpscale {
+			glog.V(3).Info("upscaling subscriber instances by 1")
+			go msc.bombard(&queryType, bus, indexedColumns, allowMissingIndex, qWT, busEmpty, maintainMinSubscribers, subscriberStopSignal)
+			subscribeUpscaleDontCare = false
+		}
 	}
 	glog.V(1).Info("Tearing down all subscriber instances")
+
+	typeOfData := "instances"
+	var currentInstances interface{}
 	msc.cM.read(&queryType, &typeOfData, &currentInstances)
 	for i := 0; i < currentInstances.(int); i++ {
 		subscriberStopSignal <- true
 	}
+
 	glog.V(1).Info("Tearing down `computeMetrics` routine")
 	stopMetricCompute <- true
 }
 
-func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, rM RunMetadata, timeToRun int, bus chan *sql.Rows, timeSeriesTick int, pubSubComSignalSize int, busEmpty chan string, wg *sync.WaitGroup, startID int, runChunk int) {
+func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, timeToRun int, bus chan *sql.Rows, pubSubComSignalSize int, busEmpty chan string, wg *sync.WaitGroup, startID int, runChunk int) {
+
 	defer wg.Done()
 
-	relaxationTimeInMS := timeSeriesTick + 200
+	publishUpscaleDontCare := false
+	publishDownscaleDontCare := false
 
-	publishDontCare := false
 	var canUpscale bool
 	var canDownscale bool
 
-	maxPublisherCountExpected := pubSubComSignalSize
-
-	publisherStopSignal := make(chan bool, maxPublisherCountExpected)
+	publisherStopSignal := make(chan bool, pubSubComSignalSize)
+	maintainMinPublishers := make(chan bool)
 
 	startTime := time.Now()
-	var currentInstances interface{}
-	typeOfData := "instances"
+
 	for true {
 		if (time.Now()).Sub(startTime).Minutes() > float64(timeToRun) {
 			break
 		}
+		// select for maintainMinPublishers
+		select {
+		case <-maintainMinPublishers:
+			publishUpscaleDontCare = true
+			break
+		default:
+			break
+		}
+		// select for busEmpty
 		select {
 		case <-busEmpty:
 			glog.V(3).Info("Bus found to be empty")
-			publishDontCare = true
+			publishUpscaleDontCare = true
 		default:
-			// in case the bus is empty, publish will happen only after one tick
-			canDownscale = mpc.downscale(&queryType, dM, rM, &publishDontCare)
-			canUpscale = mpc.upscale(&queryType, dM, rM, &publishDontCare)
-			publishDontCare = false
+			canDownscale = mpc.downscale(&queryType, dM, &publishDownscaleDontCare)
+			canUpscale = mpc.upscale(&queryType, dM, &publishUpscaleDontCare)
+			publishDownscaleDontCare = false
+			publishUpscaleDontCare = false
 
-			if canDownscale {
+			if canDownscale && !publishUpscaleDontCare {
 				glog.V(3).Info("downscaling publisher instances by 1")
-				mpc.cM.read(&queryType, &typeOfData, &currentInstances)
-				currentInstances = currentInstances.(int) - 1
-				mpc.cM.write(&queryType, &typeOfData, currentInstances)
 				publisherStopSignal <- true
 			} else if canUpscale {
 				glog.V(3).Info("upscaling publisher instances by 1")
-				mpc.cM.read(&queryType, &typeOfData, &currentInstances)
-				currentInstances = currentInstances.(int) + 1
-				mpc.cM.write(&queryType, &typeOfData, currentInstances)
-				go mpc.publishToBus(&startID, &runChunk, bus, publisherStopSignal)
+				go mpc.publishToBus(&startID, &runChunk, bus, maintainMinPublishers, publisherStopSignal)
+				publishUpscaleDontCare = true
 			}
-			// relax for a few milliseconds
-			time.Sleep(time.Duration(relaxationTimeInMS) * time.Millisecond)
 		}
 	}
 	glog.V(1).Info("Tearing down all publisher instances")
+
+	typeOfData := "instances"
+	var currentInstances interface{}
 	mpc.cM.read(&queryType, &typeOfData, &currentInstances)
 	for i := 0; i < currentInstances.(int); i++ {
 		publisherStopSignal <- true

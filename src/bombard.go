@@ -69,6 +69,7 @@ type RunPhaseConfig struct {
 	timeSeriesTick      interface{}
 	timeSeriesSize      interface{}
 	pubSubComSignalSize interface{}
+	metricPollTick      interface{}
 }
 
 /*
@@ -85,6 +86,38 @@ type Metadata interface {
 	write(queryType *string, typeOfData *string, data interface{})
 }
 
+var (
+	createMetadataTimeSeriesMutex sync.RWMutex
+	readMetadataTimeSeriesMutex   sync.RWMutex
+	updateMetadataTimeSeriesMutex sync.RWMutex
+	deleteMetadataTimeSeriesMutex sync.RWMutex
+)
+
+/*
+MetadataTimeSeries for storing all metadata types
+*/
+type MetadataTimeSeries interface {
+	readLatest() (timeSeriesPoint, error)
+	write(t timeSeriesPoint) error
+	getMaxWT(decisionWindow int) (int, error)
+}
+
+type createMetadataTimeSeries struct {
+	data []timeSeriesPoint
+}
+
+type readMetadataTimeSeries struct {
+	data []timeSeriesPoint
+}
+
+type updateMetadataTimeSeries struct {
+	data []timeSeriesPoint
+}
+
+type deleteMetadataTimeSeries struct {
+	data []timeSeriesPoint
+}
+
 // mutex cannot obviously be part of the resource being shared
 // TODO: instead of declaring variables of type sync.RWMutex, there must be a better way to do this
 
@@ -95,21 +128,6 @@ var (
 	readDMCPMMutex   sync.RWMutex
 	updateDMCPMMutex sync.RWMutex
 	deleteDMCPMMutex sync.RWMutex
-
-	createDMWTMutex sync.RWMutex
-	readDMWTMutex   sync.RWMutex
-	updateDMWTMutex sync.RWMutex
-	deleteDMWTMutex sync.RWMutex
-
-	createRMCPMMutex sync.RWMutex
-	readRMCPMMutex   sync.RWMutex
-	updateRMCPMMutex sync.RWMutex
-	deleteRMCPMMutex sync.RWMutex
-
-	createRMWTMutex sync.RWMutex
-	readRMWTMutex   sync.RWMutex
-	updateRMWTMutex sync.RWMutex
-	deleteRMWTMutex sync.RWMutex
 
 	// instances mutexes
 	createPCMInstancesMutex sync.RWMutex
@@ -147,10 +165,6 @@ var (
 
 var (
 	dmCPMMutex map[string]*sync.RWMutex
-	dmWTMutex  map[string]*sync.RWMutex
-
-	rmCPMMutex map[string]*sync.RWMutex
-	rmWTMutex  map[string]*sync.RWMutex
 
 	pcmInstancesMutex map[string]*sync.RWMutex
 	pcmSleepTimeMutex map[string]*sync.RWMutex
@@ -162,8 +176,8 @@ var (
 )
 
 type timeSeriesPoint struct {
-	cpm map[string]interface{}
-	wT  map[string]interface{}
+	cpm interface{}
+	wT  interface{}
 }
 
 /*
@@ -172,16 +186,6 @@ For each type, the keys of the map will be the querytypes
 */
 type DesiredMetadata struct {
 	cpm map[string]interface{}
-	wT  map[string]interface{}
-}
-
-/*
-RunMetadata will be updated during run phase. contains calls per minute and wait time
-For each type, the keys of the map will be the querytypes
-*/
-type RunMetadata struct {
-	cpm map[string]interface{}
-	wT  map[string]interface{}
 }
 
 /*
@@ -268,27 +272,6 @@ func run(c RunPhaseConfig, db *sql.DB, expDB *sql.DB, tableSchema string, tableN
 		"delete": &deleteDMCPMMutex,
 	}
 
-	dmWTMutex = map[string]*sync.RWMutex{
-		"create": &createDMWTMutex,
-		"read":   &readDMWTMutex,
-		"update": &updateDMWTMutex,
-		"delete": &deleteDMWTMutex,
-	}
-
-	rmCPMMutex = map[string]*sync.RWMutex{
-		"create": &createRMCPMMutex,
-		"read":   &readRMCPMMutex,
-		"update": &updateRMCPMMutex,
-		"delete": &deleteRMCPMMutex,
-	}
-
-	rmWTMutex = map[string]*sync.RWMutex{
-		"create": &createRMWTMutex,
-		"read":   &readRMWTMutex,
-		"update": &updateRMWTMutex,
-		"delete": &deleteRMWTMutex,
-	}
-
 	var mpc MasterPublishController
 	var msc MasterSubscribeController
 
@@ -320,12 +303,6 @@ func run(c RunPhaseConfig, db *sql.DB, expDB *sql.DB, tableSchema string, tableN
 		"delete": 0,
 	}
 
-	expTableName := fmt.Sprintf("%s_c4", tableName)
-	mpc.tableName = &tableName
-	msc.tableName = &expTableName
-	mpc.db = db
-	msc.db = expDB
-
 	msc.cM.sleepTime = map[string]interface{}{
 		"create": c.subscribeSleepTime,
 		"read":   c.subscribeSleepTime,
@@ -338,6 +315,12 @@ func run(c RunPhaseConfig, db *sql.DB, expDB *sql.DB, tableSchema string, tableN
 		"update": c.subscribeChunkSize,
 		"delete": c.subscribeChunkSize,
 	}
+
+	expTableName := fmt.Sprintf("%s_c4", tableName)
+	mpc.tableName = &tableName
+	msc.tableName = &expTableName
+	mpc.db = db
+	msc.db = expDB
 
 	// get indexed columns
 	indexedColumnsMap := make(map[string]bool)
@@ -385,50 +368,14 @@ func run(c RunPhaseConfig, db *sql.DB, expDB *sql.DB, tableSchema string, tableN
 		startID, count = getRunChunk(db, tableName, prepN, 0)
 	}
 	var desiredMetadata DesiredMetadata
-	var runMetadata RunMetadata
+
 	desiredMetadata.cpm = map[string]interface{}{
 		"create": int(c.createCPM.(int) / 60),
 		"read":   int(c.readCPM.(int) / 60),
 		"update": int(c.updateCPM.(int) / 60),
 		"delete": int(c.deleteCPM.(int) / 60),
 	}
-	desiredMetadata.wT = make(map[string]interface{})
-	if c.createCPM == 0 {
-		desiredMetadata.wT["create"] = math.Inf(1)
-	} else {
-		desiredMetadata.wT["create"] = int((60.0 / float64(c.createCPM.(int))) * 1000 * 1000)
-	}
 
-	if c.readCPM == 0 {
-		desiredMetadata.wT["read"] = math.Inf(1)
-	} else {
-		desiredMetadata.wT["read"] = int((60.0 / float64(c.readCPM.(int))) * 1000 * 1000)
-	}
-
-	if c.updateCPM == 0 {
-		desiredMetadata.wT["update"] = math.Inf(1)
-	} else {
-		desiredMetadata.wT["update"] = int((60.0 / float64(c.updateCPM.(int))) * 1000 * 1000)
-	}
-
-	if c.deleteCPM == 0 {
-		desiredMetadata.wT["delete"] = math.Inf(1)
-	} else {
-		desiredMetadata.wT["delete"] = int((60.0 / float64(c.deleteCPM.(int))) * 1000 * 1000)
-	}
-
-	runMetadata.cpm = map[string]interface{}{
-		"create": 0,
-		"read":   0,
-		"update": 0,
-		"delete": 0,
-	}
-	runMetadata.wT = map[string]interface{}{
-		"create": 0,
-		"read":   0,
-		"update": 0,
-		"delete": 0,
-	}
 	glog.V(1).Infof("Starting publishers")
 	var wg sync.WaitGroup
 	busEmpty := make(chan string)
@@ -437,9 +384,12 @@ func run(c RunPhaseConfig, db *sql.DB, expDB *sql.DB, tableSchema string, tableN
 
 	wg.Add(5)
 
-	timeSeriesSize := int(c.timeSeriesSize.(int64))
-	timeSeries := make([]timeSeriesPoint, timeSeriesSize)
-	go mpc.run("read", desiredMetadata, runMetadata, time, bus, int(c.timeSeriesTick.(int64)), int(c.pubSubComSignalSize.(int64)), busEmpty, &wg, startID, count)
+	var createTimeSeries *createMetadataTimeSeries
+	var readTimeSeries *readMetadataTimeSeries
+	var updateTimeSeries *updateMetadataTimeSeries
+	var deleteTimeSeries *deleteMetadataTimeSeries
+
+	go mpc.run("read", desiredMetadata, time, bus, int(c.pubSubComSignalSize.(int64)), busEmpty, &wg, startID, count)
 
 	createQWT := make(chan int)
 	readQWT := make(chan int)
@@ -450,13 +400,15 @@ func run(c RunPhaseConfig, db *sql.DB, expDB *sql.DB, tableSchema string, tableN
 
 	glog.V(0).Info("Polling metrics:")
 
-	go allMetricPoll(int(c.timeSeriesTick.(int64)), timeSeries, mpc.cM, msc.cM, desiredMetadata, runMetadata, timeSeriesSize, stopPoll)
+	go allMetricPoll(int(c.metricPollTick.(int64)), mpc.cM, msc.cM, createTimeSeries, readTimeSeries, updateTimeSeries, deleteTimeSeries, stopPoll)
 
 	go glog.V(1).Info("Starting subscribers")
-	go msc.run("create", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, int(c.timeSeriesTick.(int64)), int(c.pubSubComSignalSize.(int64)), busEmpty, bus, createQWT, &wg)
-	go msc.run("read", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, int(c.timeSeriesTick.(int64)), int(c.pubSubComSignalSize.(int64)), busEmpty, bus, readQWT, &wg)
-	go msc.run("update", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, int(c.timeSeriesTick.(int64)), int(c.pubSubComSignalSize.(int64)), busEmpty, bus, updateQWT, &wg)
-	go msc.run("delete", desiredMetadata, runMetadata, time, indexedColumnsMap, allowMissingIndex, timeSeries, int(c.timeSeriesTick.(int64)), int(c.pubSubComSignalSize.(int64)), busEmpty, bus, deleteQWT, &wg)
+
+	//queryType string, dM DesiredMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, timeSeries []timeSeriesPoint, timeSeriesTick int, pubSubComSignalSize int, busEmpty chan string, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup
+	go msc.run("create", desiredMetadata, time, indexedColumnsMap, allowMissingIndex, createTimeSeries, int(c.timeSeriesTick.(int64)), int(c.pubSubComSignalSize.(int64)), busEmpty, bus, createQWT, &wg)
+	go msc.run("read", desiredMetadata, time, indexedColumnsMap, allowMissingIndex, readTimeSeries, int(c.timeSeriesTick.(int64)), int(c.pubSubComSignalSize.(int64)), busEmpty, bus, readQWT, &wg)
+	go msc.run("update", desiredMetadata, time, indexedColumnsMap, allowMissingIndex, updateTimeSeries, int(c.timeSeriesTick.(int64)), int(c.pubSubComSignalSize.(int64)), busEmpty, bus, updateQWT, &wg)
+	go msc.run("delete", desiredMetadata, time, indexedColumnsMap, allowMissingIndex, deleteTimeSeries, int(c.timeSeriesTick.(int64)), int(c.pubSubComSignalSize.(int64)), busEmpty, bus, deleteQWT, &wg)
 	glog.V(1).Info("Waiting for MasterPublishController and MasterSubscribeController to finish")
 	wg.Wait()
 
@@ -496,8 +448,8 @@ func main() {
 	// to the temporary table from the new table
 	tempTableRunSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_RUN_SIZE_RATIO"), 32)
 	timeSeriesTick, _ := strconv.ParseInt(os.Getenv("TIME_SERIES_TICK_MS"), 10, 0)
-	timeSeriesSize, _ := strconv.ParseInt(os.Getenv("TIME_SERIES_SIZE"), 10, 0)
 	pubSubComSignalSize, _ := strconv.ParseInt(os.Getenv("PUB_SUB_COMM_SIGNAL_SIZE"), 10, 0)
+	metricPollTick, _ := strconv.ParseInt(os.Getenv("METRIC_POLL_TICK_MS"), 10, 0)
 
 	if insertCommitsAfter == 0 {
 		defVal := 1000
@@ -535,7 +487,7 @@ func main() {
 		runPhaseSubscribeSleepTime = int64(defVal)
 	}
 	if timeSeriesTick == 0 {
-		defVal := 500
+		defVal := 200
 		glog.V(0).Infof("TIME_SERIES_TICK_MS has not been set, defaulting to %d", defVal)
 		timeSeriesTick = int64(defVal)
 	}
@@ -544,10 +496,10 @@ func main() {
 		glog.V(0).Infof("PUB_SUB_COMM_SIGNAL_SIZE has not been set, defaulting to %d", defVal)
 		pubSubComSignalSize = int64(pubSubComSignalSize)
 	}
-	if timeSeriesSize == 0 {
-		defVal := 3
-		glog.V(0).Infof("TIME_SERIES_SIZE has not been set, defaulting to %d", defVal)
-		timeSeriesSize = int64(timeSeriesSize)
+	if metricPollTick == 0 {
+		defVal := 1000
+		glog.V(0).Infof("METRIC_POLL_TICK_MS has not been set, defaulting to %d", defVal)
+		metricPollTick = int64(metricPollTick)
 	}
 
 	// TODO: this feature has not been added yet, once added uncomment this part
@@ -647,9 +599,9 @@ func main() {
 		c.publishSleepTime = int(runPhasePublishSleepTime)
 		c.subscribeChunkSize = 1
 		c.subscribeSleepTime = int(runPhaseSubscribeSleepTime)
-		c.timeSeriesTick = timeSeriesTick
-		c.pubSubComSignalSize = pubSubComSignalSize
-		c.timeSeriesSize = timeSeriesSize
+		c.timeSeriesTick = int(timeSeriesTick)
+		c.pubSubComSignalSize = int(pubSubComSignalSize)
+		c.metricPollTick = int(metricPollTick)
 
 		run(c, conn, expConn, *db, *table, allowMissingIndex, prepN, runN, *time)
 
