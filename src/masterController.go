@@ -163,11 +163,11 @@ func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus ch
 }
 
 func decInstances(queryType string, m Metadata, maintainMinPubSub chan bool, dontCare bool) {
-	minSubInstances := 1
+	minPubSubInstances := 1
 	typeOfData := "instances"
 	var currentInstances interface{}
 	m.read(&queryType, &typeOfData, &currentInstances)
-	if (currentInstances.(int) < minSubInstances) && !dontCare {
+	if (currentInstances.(int) < minPubSubInstances) && !dontCare {
 		maintainMinPubSub <- true
 	}
 	currentInstances = currentInstances.(int) - 1
