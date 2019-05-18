@@ -510,7 +510,6 @@ func main() {
 	tempTablePrepSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_PREP_SIZE_RATIO"), 32) // the ratio of the temp table size to the actual table size, this amount of data is copied
 	// to the temporary table from the new table
 	tempTableRunSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_RUN_SIZE_RATIO"), 32)
-	timeSeriesTick, _ := strconv.ParseInt(os.Getenv("TIME_SERIES_TICK_MS"), 10, 0)
 	pubSubComSignalSize, _ := strconv.ParseInt(os.Getenv("PUB_SUB_COMM_SIGNAL_SIZE"), 10, 0)
 	metricPollTick, _ := strconv.ParseInt(os.Getenv("METRIC_POLL_TICK_MS"), 10, 0)
 
@@ -548,11 +547,6 @@ func main() {
 		defVal := 100
 		glog.V(0).Infof("RUN_PHASE_SUBSCRIBE_SLEEP_TIME has not been set, defaulting to %d", defVal)
 		runPhaseSubscribeSleepTime = int64(defVal)
-	}
-	if timeSeriesTick == 0 {
-		defVal := 200
-		glog.V(0).Infof("TIME_SERIES_TICK_MS has not been set, defaulting to %d", defVal)
-		timeSeriesTick = int64(defVal)
 	}
 	if pubSubComSignalSize == 0 {
 		defVal := 100
@@ -653,6 +647,8 @@ func main() {
 			"update": *allowMissingIndexUpdate,
 			"delete": *allowMissingIndexDelete,
 		}
+		timeSeriesTick := 1000
+
 		var c RunPhaseConfig
 		c.createCPM = *createCPM
 		c.readCPM = *readCPM
