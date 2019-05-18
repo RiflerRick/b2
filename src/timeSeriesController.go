@@ -1,51 +1,49 @@
 package main
 
-import "errors"
-
-func (t *createMetadataTimeSeries) readLatest() (timeSeriesPoint, error) {
+func (t *createMetadataTimeSeries) readLatest() timeSeriesPoint {
 	//get the last timeSeriesPoint that was inserted
 	createMetadataTimeSeriesMutex.RLock()
 	defer createMetadataTimeSeriesMutex.RUnlock()
 	dataNow := t.data
 	if len(dataNow) == 0 {
-		return timeSeriesPoint{cpm: -1, wT: -1}, errors.New("length of time series is 0")
+		return timeSeriesPoint{cpm: 0, wT: 0}
 	}
 	data := t.data[len(dataNow)-1]
-	return data, nil
+	return data
 }
 
-func (t *readMetadataTimeSeries) readLatest() (timeSeriesPoint, error) {
+func (t *readMetadataTimeSeries) readLatest() timeSeriesPoint {
 	// get the last timeSeriesPoint that was inserted
 	readMetadataTimeSeriesMutex.RLock()
 	defer readMetadataTimeSeriesMutex.RUnlock()
 	dataNow := t.data
 	if len(dataNow) == 0 {
-		return timeSeriesPoint{cpm: -1, wT: -1}, errors.New("length of time series is 0")
+		return timeSeriesPoint{cpm: 0, wT: 0}
 	}
 	data := t.data[len(dataNow)-1]
-	return data, nil
+	return data
 }
 
-func (t *updateMetadataTimeSeries) readLatest() (timeSeriesPoint, error) {
+func (t *updateMetadataTimeSeries) readLatest() timeSeriesPoint {
 	updateMetadataTimeSeriesMutex.RLock()
 	defer updateMetadataTimeSeriesMutex.RUnlock()
 	dataNow := t.data
 	if len(dataNow) == 0 {
-		return timeSeriesPoint{cpm: -1, wT: -1}, errors.New("length of time series is 0")
+		return timeSeriesPoint{cpm: 0, wT: 0}
 	}
 	data := t.data[len(dataNow)-1]
-	return data, nil
+	return data
 }
 
-func (t *deleteMetadataTimeSeries) readLatest() (timeSeriesPoint, error) {
+func (t *deleteMetadataTimeSeries) readLatest() timeSeriesPoint {
 	deleteMetadataTimeSeriesMutex.RLock()
 	defer deleteMetadataTimeSeriesMutex.RUnlock()
 	dataNow := t.data
 	if len(dataNow) == 0 {
-		return timeSeriesPoint{cpm: -1, wT: -1}, errors.New("length of time series is 0")
+		return timeSeriesPoint{cpm: 0, wT: 0}
 	}
 	data := t.data[len(dataNow)-1]
-	return data, nil
+	return data
 }
 
 func (s *createMetadataTimeSeries) write(t timeSeriesPoint) error {
@@ -76,14 +74,14 @@ func (s *deleteMetadataTimeSeries) write(t timeSeriesPoint) error {
 	return nil
 }
 
-func (t *createMetadataTimeSeries) getMaxWT(decisionWindow int) (int, error) {
+func (t *createMetadataTimeSeries) getMaxWT(decisionWindow int) int {
 	maxValue := 0
 	createMetadataTimeSeriesMutex.RLock()
 	defer createMetadataTimeSeriesMutex.RUnlock()
 	dataNow := t.data
 	tLen := len(dataNow)
 	if tLen == 0 {
-		return -1, errors.New("length of time series is 0")
+		return 0
 	}
 	if tLen < decisionWindow {
 		decisionWindow = tLen
@@ -94,17 +92,17 @@ func (t *createMetadataTimeSeries) getMaxWT(decisionWindow int) (int, error) {
 			maxValue = valueNow
 		}
 	}
-	return maxValue, nil
+	return maxValue
 }
 
-func (t *readMetadataTimeSeries) getMaxWT(decisionWindow int) (int, error) {
+func (t *readMetadataTimeSeries) getMaxWT(decisionWindow int) int {
 	maxValue := 0
 	readMetadataTimeSeriesMutex.RLock()
 	defer readMetadataTimeSeriesMutex.RUnlock()
 	dataNow := t.data
 	tLen := len(dataNow)
 	if tLen == 0 {
-		return -1, errors.New("length of time series is 0")
+		return 0
 	}
 	if tLen < decisionWindow {
 		decisionWindow = tLen
@@ -115,17 +113,17 @@ func (t *readMetadataTimeSeries) getMaxWT(decisionWindow int) (int, error) {
 			maxValue = valueNow
 		}
 	}
-	return maxValue, nil
+	return maxValue
 }
 
-func (t *updateMetadataTimeSeries) getMaxWT(decisionWindow int) (int, error) {
+func (t *updateMetadataTimeSeries) getMaxWT(decisionWindow int) int {
 	maxValue := 0
 	updateMetadataTimeSeriesMutex.RLock()
 	defer updateMetadataTimeSeriesMutex.RUnlock()
 	dataNow := t.data
 	tLen := len(dataNow)
 	if tLen == 0 {
-		return -1, errors.New("length of time series is 0")
+		return 0
 	}
 	if tLen < decisionWindow {
 		decisionWindow = tLen
@@ -136,17 +134,17 @@ func (t *updateMetadataTimeSeries) getMaxWT(decisionWindow int) (int, error) {
 			maxValue = valueNow
 		}
 	}
-	return maxValue, nil
+	return maxValue
 }
 
-func (t *deleteMetadataTimeSeries) getMaxWT(decisionWindow int) (int, error) {
+func (t *deleteMetadataTimeSeries) getMaxWT(decisionWindow int) int {
 	maxValue := 0
 	deleteMetadataTimeSeriesMutex.RLock()
 	defer deleteMetadataTimeSeriesMutex.RUnlock()
 	dataNow := t.data
 	tLen := len(dataNow)
 	if tLen == 0 {
-		return -1, errors.New("length of time series is 0")
+		return 0
 	}
 	if tLen < decisionWindow {
 		decisionWindow = tLen
@@ -157,5 +155,5 @@ func (t *deleteMetadataTimeSeries) getMaxWT(decisionWindow int) (int, error) {
 			maxValue = valueNow
 		}
 	}
-	return maxValue, nil
+	return maxValue
 }

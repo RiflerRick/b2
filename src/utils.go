@@ -172,7 +172,7 @@ func getColSubset(colSelect map[string]bool, allowIDSelection bool, indexedCols 
 	}
 }
 
-func allMetricPoll(pollTick int, pubCM ControllerMetadata, subCM ControllerMetadata, c MetadataTimeSeries, r MetadataTimeSeries, u MetadataTimeSeries, d MetadataTimeSeries, stopSignal chan bool) {
+func allMetricPoll(pollTick int, dM DesiredMetadata, pubCM ControllerMetadata, subCM ControllerMetadata, c MetadataTimeSeries, r MetadataTimeSeries, u MetadataTimeSeries, d MetadataTimeSeries, stopSignal chan bool) {
 	breakLoop := false
 	for {
 		select {
@@ -183,14 +183,20 @@ func allMetricPoll(pollTick int, pubCM ControllerMetadata, subCM ControllerMetad
 			mpcCM := pollControllerMetrics(pubCM)
 			mscCM := pollControllerMetrics(subCM)
 
+			desiredMetadataMap := pollDesiredMetadata(dM)
+
 			cpm, wT := pollMetadataMetrics(c)
-			glog.V(0).Infof("create CPM: %d, create WT: %d", cpm, wT)
+			glog.V(0).Infof("DESIRED: create CPM: %d", desiredMetadataMap["create"].(int)*60)
+			glog.V(0).Infof("RUN: create CPM: %d, create WT: %d", cpm*60, wT)
 			cpm, wT = pollMetadataMetrics(r)
-			glog.V(0).Infof("read CPM: %d, read WT: %d", cpm, wT)
+			glog.V(0).Infof("DESIRED: read CPM: %d", desiredMetadataMap["read"].(int)*60)
+			glog.V(0).Infof("RUN: read CPM: %d, read WT: %d", cpm*60, wT)
 			cpm, wT = pollMetadataMetrics(u)
-			glog.V(0).Infof("update CPM: %d, update WT: %d", cpm, wT)
+			glog.V(0).Infof("DESIRED: update CPM: %d", desiredMetadataMap["update"].(int)*60)
+			glog.V(0).Infof("RUN: update CPM: %d, update WT: %d", cpm*60, wT)
 			cpm, wT = pollMetadataMetrics(d)
-			glog.V(0).Infof("delete CPM: %d, delete WT: %d", cpm, wT)
+			glog.V(0).Infof("DESIRED: delete CPM: %d", desiredMetadataMap["delete"].(int)*60)
+			glog.V(0).Infof("RUN: delete CPM: %d, delete WT: %d", cpm*60, wT)
 
 			glog.V(0).Infof(" Publisher Instances: \t%v\n Subscriber Instances: \t%v\n", mpcCM, mscCM)
 			time.Sleep(time.Duration(pollTick) * time.Millisecond)
@@ -202,11 +208,34 @@ func allMetricPoll(pollTick int, pubCM ControllerMetadata, subCM ControllerMetad
 
 }
 
-func pollMetadataMetrics(timeSeries MetadataTimeSeries) (int, int) {
-	t, err := timeSeries.readLatest()
-	if err != nil {
-		return 0, 0
+func pollDesiredMetadata(dM DesiredMetadata) map[string]interface{} {
+	var createCPM interface{}
+	var readCPM interface{}
+	var updateCPM interface{}
+	var deleteCPM interface{}
+
+	typeOfData := "cpm"
+
+	createQueryType := "create"
+	readQueryType := "read"
+	updateQueryType := "update"
+	deleteQueryType := "delete"
+
+	dM.read(&createQueryType, &typeOfData, &createCPM)
+	dM.read(&readQueryType, &typeOfData, &readCPM)
+	dM.read(&updateQueryType, &typeOfData, &updateCPM)
+	dM.read(&deleteQueryType, &typeOfData, &deleteCPM)
+
+	return map[string]interface{}{
+		"create": createCPM,
+		"read":   readCPM,
+		"update": updateCPM,
+		"delete": deleteCPM,
 	}
+}
+
+func pollMetadataMetrics(timeSeries MetadataTimeSeries) (int, int) {
+	t := timeSeries.readLatest()
 	return t.cpm.(int), t.wT.(int)
 }
 
@@ -254,7 +283,7 @@ func pushToTimeSeries(timeSeries MetadataTimeSeries, cpm int, wT int) error {
 	return timeSeries.write(t)
 }
 
-func computeMetrics(queryType string, timeSeriesTick int, timeSeries MetadataTimeSeries, qWT chan int, stopSignal chan bool, metricSynced chan bool) {
+func computeMetrics(queryType string, timeSeriesTick int, timeSeries MetadataTimeSeries, qWT chan int, stopSignal chan bool) {
 	totalQExecuted := 0
 	totalWT := 0
 	breakLoop := false
@@ -264,6 +293,7 @@ func computeMetrics(queryType string, timeSeriesTick int, timeSeries MetadataTim
 	syncTimeSeriesControlCounter := 0
 
 	startTime := time.Now()
+	initialStartTime := startTime
 	for {
 		select {
 		case <-stopSignal:
@@ -271,9 +301,11 @@ func computeMetrics(queryType string, timeSeriesTick int, timeSeries MetadataTim
 			break
 		default:
 			timeElapsed := (time.Now()).Sub(startTime)
-			if int(int(timeElapsed.Seconds()*1000)/timeSeriesTick) > syncTimeSeriesControlCounter {
-				glog.V(2).Infof("syncing CPM and WT to timeSeries")
-				err := pushToTimeSeries(timeSeries, cpm, wT)
+			totalTimeElapsed := (time.Now()).Sub(initialStartTime)
+			if int(int(totalTimeElapsed.Seconds()*1000)/timeSeriesTick) > syncTimeSeriesControlCounter {
+				glog.V(3).Infof("syncing CPM and WT to timeSeries")
+				err := pushToTimeSeries(timeSeries, cpm/totalQExecuted, wT/totalQExecuted)
+				// fmt.Println(totalQExecuted)
 				if err != nil {
 					glog.V(3).Infof("Could not push to timeSeries")
 					return
@@ -283,14 +315,14 @@ func computeMetrics(queryType string, timeSeriesTick int, timeSeries MetadataTim
 				totalWT = 0
 				cpm = 0
 				wT = 0
-				metricSynced <- true
+				startTime = time.Now()
 			}
 			totalWT += <-qWT
 			totalQExecuted++
 
 			timeElapsedSeconds := timeElapsed.Seconds()
-			cpm = int(math.Round(float64(totalQExecuted) / timeElapsedSeconds))
-			wT = int(math.Round(float64(totalWT / totalQExecuted)))
+			cpm += int(math.Round(float64(totalQExecuted) / timeElapsedSeconds))
+			wT += int(math.Round(float64(totalWT / totalQExecuted)))
 		}
 		if breakLoop {
 			break

@@ -28,11 +28,7 @@ func (msc MasterSubscribeController) upscale(queryType *string, dM DesiredMetada
 	if *dontCare {
 		return true
 	}
-	t, err := m.readLatest()
-	if err != nil {
-		// expecting this error to be 0 length
-		return false
-	}
+	t := m.readLatest()
 	currentCPM := t.cpm.(int)
 	var desiredCPM interface{}
 	typeOfData := "cpm"
@@ -47,16 +43,9 @@ func (msc MasterSubscribeController) downscale(queryType *string, dM DesiredMeta
 	if *dontCare {
 		return true
 	}
-	t, err := m.readLatest()
-	if err != nil {
-		return false
-	}
+	t := m.readLatest()
 	currentWT := t.wT.(int)
-	maxWT, err := m.getMaxWT(decisionWindow)
-	if err != nil {
-		// expecting this error to be 0 length
-		return false
-	}
+	maxWT := m.getMaxWT(decisionWindow)
 	if currentWT > maxWT {
 		return true
 	}
@@ -146,6 +135,8 @@ func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus ch
 		select {
 		case <-stopSignal:
 			breakLoop = true
+			stopPublisherDontCare = true
+			break
 		default:
 			offset := r.Intn(*count)
 			rows, err := mpc.db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", *(mpc.tableName), *startID, mpc.getChunkSize(&queryType), offset))
@@ -182,7 +173,20 @@ func incInstances(queryType string, m Metadata, dontCare bool) {
 	m.write(&queryType, &typeOfData, currentInstances)
 }
 
-func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, timeSeries MetadataTimeSeries, timeSeriesTick int, pubSubComSignalSize int, busEmpty chan string, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup) {
+func (msc MasterSubscribeController) run(
+	queryType string,
+	dM DesiredMetadata,
+	timeToRun int,
+	indexedColumns map[string]bool,
+	allowMissingIndex map[string]bool,
+	timeSeries MetadataTimeSeries,
+	timeSeriesTick int,
+	pubSubComSignalSize int,
+	busEmpty chan string,
+	bus chan *sql.Rows,
+	qWT chan int,
+	wg *sync.WaitGroup) {
+
 	defer wg.Done()
 
 	subscribeUpscaleDontCare := false
@@ -193,18 +197,17 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, t
 	stopMetricCompute := make(chan bool)
 	maintainMinSubscribers := make(chan bool)
 
-	metricSynced := make(chan bool)
+	relaxationTimeMS := timeSeriesTick + 10
 
 	glog.V(1).Infof("Spawning computeMetric routine for queryType: %s", queryType)
-	go computeMetrics(queryType, timeSeriesTick, timeSeries, qWT, stopMetricCompute, metricSynced)
+	go computeMetrics(queryType, timeSeriesTick, timeSeries, qWT, stopMetricCompute)
 	startTime := time.Now()
 
 	for true {
 		if (time.Now()).Sub(startTime).Minutes() > float64(timeToRun) {
 			break
 		}
-		// waiting for metrics to be synced
-		<-metricSynced
+
 		// select for maintainMinSubscribers
 		select {
 		case <-maintainMinSubscribers:
@@ -213,6 +216,7 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, t
 		default:
 			break
 		}
+
 		canDownscale := msc.downscale(&queryType, dM, timeSeries, 20, &subscribeDownscaleDontCare)
 		canUpscale := msc.upscale(&queryType, dM, timeSeries, 20, &subscribeUpscaleDontCare)
 
@@ -224,6 +228,7 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, t
 			go msc.bombard(&queryType, bus, indexedColumns, allowMissingIndex, qWT, busEmpty, maintainMinSubscribers, subscriberStopSignal)
 			subscribeUpscaleDontCare = false
 		}
+		time.Sleep(time.Duration(relaxationTimeMS) * time.Millisecond)
 	}
 	glog.V(1).Info("Tearing down all subscriber instances")
 
@@ -238,7 +243,17 @@ func (msc MasterSubscribeController) run(queryType string, dM DesiredMetadata, t
 	stopMetricCompute <- true
 }
 
-func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, timeToRun int, bus chan *sql.Rows, pubSubComSignalSize int, busEmpty chan string, wg *sync.WaitGroup, startID int, runChunk int) {
+func (mpc MasterPublishController) run(
+	queryType string,
+	dM DesiredMetadata,
+	timeToRun int,
+	bus chan *sql.Rows,
+	pubSubComSignalSize int,
+	busEmpty chan string,
+	wg *sync.WaitGroup,
+	timeSeriesTick int,
+	startID int,
+	runChunk int) {
 
 	defer wg.Done()
 
@@ -252,6 +267,11 @@ func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, tim
 	maintainMinPublishers := make(chan bool)
 
 	startTime := time.Now()
+
+	relaxationTimeMS := timeSeriesTick + 10
+
+	glog.V(2).Infof("Starting initial publisher")
+	go mpc.publishToBus(&startID, &runChunk, bus, maintainMinPublishers, publisherStopSignal)
 
 	for true {
 		if (time.Now()).Sub(startTime).Minutes() > float64(timeToRun) {
@@ -270,21 +290,22 @@ func (mpc MasterPublishController) run(queryType string, dM DesiredMetadata, tim
 		case <-busEmpty:
 			glog.V(3).Info("Bus found to be empty")
 			publishUpscaleDontCare = true
+			break
 		default:
-			canDownscale = mpc.downscale(&queryType, dM, &publishDownscaleDontCare)
-			canUpscale = mpc.upscale(&queryType, dM, &publishUpscaleDontCare)
-			publishDownscaleDontCare = false
-			publishUpscaleDontCare = false
-
-			if canDownscale && !publishUpscaleDontCare {
-				glog.V(3).Info("downscaling publisher instances by 1")
-				publisherStopSignal <- true
-			} else if canUpscale {
-				glog.V(3).Info("upscaling publisher instances by 1")
-				go mpc.publishToBus(&startID, &runChunk, bus, maintainMinPublishers, publisherStopSignal)
-				publishUpscaleDontCare = true
-			}
+			break
 		}
+		canDownscale = mpc.downscale(&queryType, dM, &publishDownscaleDontCare)
+		canUpscale = mpc.upscale(&queryType, dM, &publishUpscaleDontCare)
+
+		if canDownscale && !publishUpscaleDontCare {
+			glog.V(3).Info("downscaling publisher instances by 1")
+			publisherStopSignal <- true
+		} else if canUpscale {
+			glog.V(3).Info("upscaling publisher instances by 1")
+			go mpc.publishToBus(&startID, &runChunk, bus, maintainMinPublishers, publisherStopSignal)
+			publishUpscaleDontCare = false
+		}
+		time.Sleep(time.Duration(relaxationTimeMS) * time.Millisecond)
 	}
 	glog.V(1).Info("Tearing down all publisher instances")
 

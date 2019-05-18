@@ -97,9 +97,9 @@ var (
 MetadataTimeSeries for storing all metadata types
 */
 type MetadataTimeSeries interface {
-	readLatest() (timeSeriesPoint, error)
+	readLatest() timeSeriesPoint
 	write(t timeSeriesPoint) error
-	getMaxWT(decisionWindow int) (int, error)
+	getMaxWT(decisionWindow int) int
 }
 
 type createMetadataTimeSeries struct {
@@ -394,7 +394,17 @@ func run(c RunPhaseConfig, db *sql.DB, expDB *sql.DB, tableSchema string, tableN
 	updateTimeSeries.data = make([]timeSeriesPoint, 0)
 	deleteTimeSeries.data = make([]timeSeriesPoint, 0)
 
-	go mpc.run("read", desiredMetadata, time, bus, c.pubSubComSignalSize.(int), busEmpty, &wg, startID, count)
+	go mpc.run(
+		"read",
+		desiredMetadata,
+		time,
+		bus,
+		c.pubSubComSignalSize.(int),
+		busEmpty,
+		&wg,
+		c.timeSeriesTick.(int),
+		startID,
+		count)
 
 	createQWT := make(chan int)
 	readQWT := make(chan int)
@@ -405,15 +415,63 @@ func run(c RunPhaseConfig, db *sql.DB, expDB *sql.DB, tableSchema string, tableN
 
 	glog.V(0).Info("Polling metrics:")
 
-	go allMetricPoll(c.metricPollTick.(int), mpc.cM, msc.cM, &createTimeSeries, &readTimeSeries, &updateTimeSeries, &deleteTimeSeries, stopPoll)
+	go allMetricPoll(c.metricPollTick.(int), desiredMetadata, mpc.cM, msc.cM, &createTimeSeries, &readTimeSeries, &updateTimeSeries, &deleteTimeSeries, stopPoll)
 
 	go glog.V(1).Info("Starting subscribers")
 
 	//queryType string, dM DesiredMetadata, timeToRun int, indexedColumns map[string]bool, allowMissingIndex map[string]bool, timeSeries []timeSeriesPoint, timeSeriesTick int, pubSubComSignalSize int, busEmpty chan string, bus chan *sql.Rows, qWT chan int, wg *sync.WaitGroup
-	go msc.run("create", desiredMetadata, time, indexedColumnsMap, allowMissingIndex, &createTimeSeries, c.timeSeriesTick.(int), c.pubSubComSignalSize.(int), busEmpty, bus, createQWT, &wg)
-	go msc.run("read", desiredMetadata, time, indexedColumnsMap, allowMissingIndex, &readTimeSeries, c.timeSeriesTick.(int), c.pubSubComSignalSize.(int), busEmpty, bus, readQWT, &wg)
-	go msc.run("update", desiredMetadata, time, indexedColumnsMap, allowMissingIndex, &updateTimeSeries, c.timeSeriesTick.(int), c.pubSubComSignalSize.(int), busEmpty, bus, updateQWT, &wg)
-	go msc.run("delete", desiredMetadata, time, indexedColumnsMap, allowMissingIndex, &deleteTimeSeries, c.timeSeriesTick.(int), c.pubSubComSignalSize.(int), busEmpty, bus, deleteQWT, &wg)
+	go msc.run(
+		"create",
+		desiredMetadata,
+		time,
+		indexedColumnsMap,
+		allowMissingIndex,
+		&createTimeSeries,
+		c.timeSeriesTick.(int),
+		c.pubSubComSignalSize.(int),
+		busEmpty,
+		bus,
+		createQWT,
+		&wg)
+	go msc.run(
+		"read",
+		desiredMetadata,
+		time,
+		indexedColumnsMap,
+		allowMissingIndex,
+		&readTimeSeries,
+		c.timeSeriesTick.(int),
+		c.pubSubComSignalSize.(int),
+		busEmpty,
+		bus,
+		readQWT,
+		&wg)
+	go msc.run(
+		"update",
+		desiredMetadata,
+		time,
+		indexedColumnsMap,
+		allowMissingIndex,
+		&updateTimeSeries,
+		c.timeSeriesTick.(int),
+		c.pubSubComSignalSize.(int),
+		busEmpty,
+		bus,
+		updateQWT,
+		&wg)
+	go msc.run(
+		"delete",
+		desiredMetadata,
+		time,
+		indexedColumnsMap,
+		allowMissingIndex,
+		&deleteTimeSeries,
+		c.timeSeriesTick.(int),
+		c.pubSubComSignalSize.(int),
+		busEmpty,
+		bus,
+		deleteQWT,
+		&wg)
 	glog.V(1).Info("Waiting for MasterPublishController and MasterSubscribeController to finish")
 	wg.Wait()
 
