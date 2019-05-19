@@ -31,11 +31,13 @@ services:
         "--database",
         "bigbasket",
         "--time",
-        "5",
+        "1",
         "--tablename",
         "membercommunication_membercommunicationlog",
         "--read-cpm",
-        "4000",
+        "1000",
+        "--create-cpm",
+        "2000",
         "--run",
       ]
     deploy:
