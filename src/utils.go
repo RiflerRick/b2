@@ -172,6 +172,23 @@ func getColSubset(colSelect map[string]bool, allowIDSelection bool, indexedCols 
 	}
 }
 
+func flushBus(bus chan *sql.Rows) {
+	breakLoop := false
+	for {
+		select {
+		case r := <-bus:
+			glog.V(3).Infof("flusing and closing rows")
+			r.Close()
+		default:
+			breakLoop = true
+			break
+		}
+		if breakLoop {
+			break
+		}
+	}
+}
+
 func allMetricPoll(pollTick int, dM DesiredMetadata, pubCM ControllerMetadata, subCM ControllerMetadata, c MetadataTimeSeries, r MetadataTimeSeries, u MetadataTimeSeries, d MetadataTimeSeries, stopSignal chan bool) {
 	breakLoop := false
 	for {

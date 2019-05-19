@@ -230,6 +230,7 @@ func (msc MasterSubscribeController) run(
 		}
 		time.Sleep(time.Duration(relaxationTimeMS) * time.Millisecond)
 	}
+	glog.V(1).Info("Cleaning up")
 	glog.V(1).Info("Tearing down all subscriber instances")
 
 	typeOfData := "instances"
@@ -238,9 +239,19 @@ func (msc MasterSubscribeController) run(
 	for i := 0; i < currentInstances.(int); i++ {
 		subscriberStopSignal <- true
 	}
+	glog.V(1).Info("Tore down all subscriber instances")
+	glog.V(1).Infof("Flushing the bus")
+	flushBus(bus)
+	glog.V(1).Infof("Flushed the bus")
+	glog.V(1).Infof("Preparing tear down of computeMetrics")
+	// this is for allowing computeMetric to proceed from the qWT blocking call
+	qWT <- 0
 
 	glog.V(1).Info("Tearing down `computeMetrics` routine")
 	stopMetricCompute <- true
+	glog.V(1)
+	close(qWT)
+	glog.V(1).Infof("Tore down `computeMetrics` routine")
 }
 
 func (mpc MasterPublishController) run(
@@ -315,6 +326,7 @@ func (mpc MasterPublishController) run(
 	for i := 0; i < currentInstances.(int); i++ {
 		publisherStopSignal <- true
 	}
+	glog.V(1).Info("Tore down all publisher instances")
 }
 
 func (mpc MasterPublishController) getChunkSize(queryType *string) int {
