@@ -58,18 +58,19 @@ func (e dbError) Error() string {
 RunPhaseConfig is the configs supplied by the user for the run phase
 */
 type RunPhaseConfig struct {
-	createCPM           interface{}
-	readCPM             interface{}
-	updateCPM           interface{}
-	deleteCPM           interface{}
-	publishChunkSize    interface{}
-	subscribeChunkSize  interface{}
-	publishSleepTime    interface{}
-	subscribeSleepTime  interface{}
-	timeSeriesTick      interface{}
-	timeSeriesSize      interface{}
-	pubSubComSignalSize interface{}
-	metricPollTick      interface{}
+	createCPM             interface{}
+	readCPM               interface{}
+	updateCPM             interface{}
+	deleteCPM             interface{}
+	publishChunkSize      interface{}
+	subscribeChunkSize    interface{}
+	publishSleepTime      interface{}
+	minSubscribeSleepTime interface{}
+	maxSubscribeSleepTime interface{}
+	timeSeriesTick        interface{}
+	timeSeriesSize        interface{}
+	pubSubComSignalSize   interface{}
+	metricPollTick        interface{}
 }
 
 /*
@@ -304,10 +305,10 @@ func run(c RunPhaseConfig, db *sql.DB, expDB *sql.DB, tableSchema string, tableN
 	}
 
 	msc.cM.sleepTime = map[string]interface{}{
-		"create": c.subscribeSleepTime,
-		"read":   c.subscribeSleepTime,
-		"update": c.subscribeSleepTime,
-		"delete": c.subscribeSleepTime,
+		"create": (c.minSubscribeSleepTime.(int) + c.maxSubscribeSleepTime.(int)) / 2,
+		"read":   (c.minSubscribeSleepTime.(int) + c.maxSubscribeSleepTime.(int)) / 2,
+		"update": (c.minSubscribeSleepTime.(int) + c.maxSubscribeSleepTime.(int)) / 2,
+		"delete": (c.minSubscribeSleepTime.(int) + c.maxSubscribeSleepTime.(int)) / 2,
 	}
 	msc.cM.chunkSize = map[string]interface{}{
 		"create": c.subscribeChunkSize,
@@ -429,6 +430,8 @@ func run(c RunPhaseConfig, db *sql.DB, expDB *sql.DB, tableSchema string, tableN
 		&createTimeSeries,
 		c.timeSeriesTick.(int),
 		c.pubSubComSignalSize.(int),
+		c.minSubscribeSleepTime.(int),
+		c.maxSubscribeSleepTime.(int),
 		busEmpty,
 		bus,
 		createQWT,
@@ -442,6 +445,8 @@ func run(c RunPhaseConfig, db *sql.DB, expDB *sql.DB, tableSchema string, tableN
 		&readTimeSeries,
 		c.timeSeriesTick.(int),
 		c.pubSubComSignalSize.(int),
+		c.minSubscribeSleepTime.(int),
+		c.maxSubscribeSleepTime.(int),
 		busEmpty,
 		bus,
 		readQWT,
@@ -455,6 +460,8 @@ func run(c RunPhaseConfig, db *sql.DB, expDB *sql.DB, tableSchema string, tableN
 		&updateTimeSeries,
 		c.timeSeriesTick.(int),
 		c.pubSubComSignalSize.(int),
+		c.minSubscribeSleepTime.(int),
+		c.maxSubscribeSleepTime.(int),
 		busEmpty,
 		bus,
 		updateQWT,
@@ -468,6 +475,8 @@ func run(c RunPhaseConfig, db *sql.DB, expDB *sql.DB, tableSchema string, tableN
 		&deleteTimeSeries,
 		c.timeSeriesTick.(int),
 		c.pubSubComSignalSize.(int),
+		c.minSubscribeSleepTime.(int),
+		c.maxSubscribeSleepTime.(int),
 		busEmpty,
 		bus,
 		deleteQWT,
@@ -504,8 +513,6 @@ func main() {
 	prepPhaseChunkSize, _ := strconv.ParseInt(os.Getenv("PREP_PHASE_CHUNK_SIZE"), 10, 0)
 	runPhasePublishChunkSize, _ := strconv.ParseInt(os.Getenv("RUN_PHASE_PUBLISH_CHUNK_SIZE"), 10, 0)
 	// runPhaseSubscribeChunkSize, _ := strconv.ParseInt(os.Getenv("RUN_PHASE_SUBSCRIBE_CHUNK_SIZE"), 10, 0)
-	runPhasePublishSleepTime, _ := strconv.ParseInt(os.Getenv("RUN_PHASE_PUBLISH_SLEEP_TIME"), 10, 0)
-	runPhaseSubscribeSleepTime, _ := strconv.ParseInt(os.Getenv("RUN_PHASE_SUBSCRIBE_SLEEP_TIME"), 10, 0)
 
 	tempTablePrepSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_PREP_SIZE_RATIO"), 32) // the ratio of the temp table size to the actual table size, this amount of data is copied
 	// to the temporary table from the new table
@@ -537,16 +544,6 @@ func main() {
 		defVal := 10000
 		glog.V(0).Infof("RUN_PHASE_PUBLISH_CHUNK_SIZE has not been set, defaulting to %d", defVal)
 		runPhasePublishChunkSize = int64(defVal)
-	}
-	if runPhasePublishSleepTime == 0 {
-		defVal := 200
-		glog.V(0).Infof("RUN_PHASE_PUBLISH_SLEEP_TIME has not been set, defaulting to %d", defVal)
-		runPhasePublishSleepTime = int64(defVal)
-	}
-	if runPhaseSubscribeSleepTime == 0 {
-		defVal := 100
-		glog.V(0).Infof("RUN_PHASE_SUBSCRIBE_SLEEP_TIME has not been set, defaulting to %d", defVal)
-		runPhaseSubscribeSleepTime = int64(defVal)
 	}
 	if pubSubComSignalSize == 0 {
 		defVal := 100
@@ -655,9 +652,10 @@ func main() {
 		c.updateCPM = *updateCPM
 		c.deleteCPM = *deleteCPM
 		c.publishChunkSize = int(runPhasePublishChunkSize)
-		c.publishSleepTime = int(runPhasePublishSleepTime)
+		c.publishSleepTime = -1
 		c.subscribeChunkSize = 1
-		c.subscribeSleepTime = int(runPhaseSubscribeSleepTime)
+		c.minSubscribeSleepTime = 10
+		c.maxSubscribeSleepTime = 500
 		c.timeSeriesTick = int(timeSeriesTick)
 		c.pubSubComSignalSize = int(pubSubComSignalSize)
 		c.metricPollTick = int(metricPollTick)

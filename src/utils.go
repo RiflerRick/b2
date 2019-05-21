@@ -322,7 +322,6 @@ func computeMetrics(queryType string, timeSeriesTick int, timeSeries MetadataTim
 			if int(int(totalTimeElapsed.Seconds()*1000)/timeSeriesTick) > syncTimeSeriesControlCounter {
 				glog.V(3).Infof("syncing CPM and WT to timeSeries")
 				err := pushToTimeSeries(timeSeries, cpm/totalQExecuted, wT/totalQExecuted)
-				// fmt.Println(totalQExecuted)
 				if err != nil {
 					glog.V(3).Infof("Could not push to timeSeries")
 					return
