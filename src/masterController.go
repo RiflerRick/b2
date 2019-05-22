@@ -176,8 +176,8 @@ func (mpc MasterPublishController) publishToBus(startID *int, count *int, bus ch
 			breakLoop = true
 			break
 		default:
-			offset := r.Intn(*count)
-			rows, err := mpc.db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d OFFSET %d", *(mpc.tableName), *startID, mpc.getChunkSize(&queryType), offset))
+			offset := *startID + r.Intn(mpc.getChunkSize(&queryType))
+			rows, err := mpc.db.Query(fmt.Sprintf("SELECT * FROM %s WHERE id >= %d LIMIT %d", *(mpc.tableName), offset, mpc.getChunkSize(&queryType)))
 			if err != nil {
 				glog.Info(err)
 				return
