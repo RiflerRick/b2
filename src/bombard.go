@@ -508,6 +508,7 @@ func getConnection(host string, user string, pwd string, db string, port int) *s
 
 func main() {
 
+	maxIdleConnections, _ := strconv.ParseInt(os.Getenv("MAX_IDLE_CONNECTIONS"), 10, 0)
 	approxTableSize, _ := strconv.ParseInt(os.Getenv("APPROX_TABLE_SIZE"), 10, 0)
 	insertCommitsAfter, _ := strconv.ParseInt(os.Getenv("INSERT_COMMITS_AFTER"), 10, 0)
 	prepPhaseChunkSize, _ := strconv.ParseInt(os.Getenv("PREP_PHASE_CHUNK_SIZE"), 10, 0)
@@ -519,6 +520,12 @@ func main() {
 	tempTableRunSizeRatio, _ := strconv.ParseFloat(os.Getenv("TEMP_TABLE_RUN_SIZE_RATIO"), 32)
 	pubSubComSignalSize, _ := strconv.ParseInt(os.Getenv("PUB_SUB_COMM_SIGNAL_SIZE"), 10, 0)
 	metricPollTick, _ := strconv.ParseInt(os.Getenv("METRIC_POLL_TICK_MS"), 10, 0)
+
+	if maxIdleConnections == 0 {
+		defVal := 10
+		glog.V(0).Infof("MAX_IDLE_CONNECTIONS has not been set, defaulting to %d", defVal)
+		maxIdleConnections = int64(defVal)
+	}
 
 	if insertCommitsAfter == 0 {
 		defVal := 1000
@@ -598,6 +605,9 @@ func main() {
 		expConn := getConnection(*expHost, *user, *pwd, *db, *port)
 		glog.V(0).Infof("Starting prepare phase for table: %s", *table)
 
+		conn.SetMaxIdleConns(int(maxIdleConnections))
+		expConn.SetMaxIdleConns(int(maxIdleConnections))
+
 		var prepN int
 		if approxTableSize == 0 {
 			glog.V(0).Info("APPROX_TABLE_SIZE has not been provided. Falling back to count rows from table")
@@ -617,6 +627,10 @@ func main() {
 		glog.V(0).Info("Running 'run' phase!!!")
 		conn := getConnection(*host, *user, *pwd, *db, *port)
 		expConn := getConnection(*expHost, *user, *pwd, *db, *port)
+
+		conn.SetMaxIdleConns(int(maxIdleConnections))
+		expConn.SetMaxIdleConns(int(maxIdleConnections))
+
 		var prepN int
 		var runN int
 		if approxTableSize == 0 {
