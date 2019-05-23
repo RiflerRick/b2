@@ -9,8 +9,6 @@ services:
       - PREP_PHASE_CHUNK_SIZE=10000
       - TEMP_TABLE_RUN_SIZE_RATIO=0.25
       - RUN_PHASE_PUBLISH_CHUNK_SIZE=10000
-      - RUN_PHASE_PUBLISH_SLEEP_TIME=200
-      - RUN_PHASE_SUBSCRIBE_SLEEP_TIME=100
     command:
       [
         "./bombard",
