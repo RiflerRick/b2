@@ -26,14 +26,13 @@ note: the `bus` is simply a channel of type
 
 ### Publisher
 
-**We would always be having one subscriber**
+**We would always be having one publisher**
 
-The publisher is responsible for selecting rows from the original table and publishing to the bus. The chunk size of rows selected from the original table is controlled by `readChunkSize`. The `readChunkSize` is supplied as a pointer to the publisher instances by the `MasterPublishController`. The sleep time after each select query is also supplied as a pointer to the publisher instances by the `MasterPublishController`. The `MasterPublishController` will maintain a channel `stopSignal` of boolean type for signalling any publisher instance to stop.
+The publisher is responsible for selecting rows from the original table and publishing to the bus. The chunk size of rows selected from the original table is controlled by `readChunkSize`. The `readChunkSize` is supplied as a pointer to the publisher instances by the `MasterPublishController`. The `MasterPublishController` will maintain a channel `stopSignal` of boolean type for signalling any publisher instance to stop.
 
 The `MasterPublishController` can control the rate of publishing data to the bus in 3 ways:
 
 - Increasing/Decreasing the number of publisher instances
-- Increasing/Decreasing the sleep time for every publisher
 - Increasing/Decreasing the readChunkSize of each publisher instance
 
 In any case, the bus cannot be empty, from the consumer instances, if the bus is empty, it sends the query type as a string to the channel that is received by the `MasterPublishController` and the `MasterSubscribeController`.
@@ -48,7 +47,7 @@ improvements req: control sleep time, control readChunkSize
 
 #### Downscaling the publisher instances
 
-downscaling will be based on calls per minute(or unit time in that case), if the calls per unit time is more than required, it will attempt to downscale the publishers
+Currently publishers are never downscaled, as they are upscaled only in need
 
 ## Metadata(wait time and calls per unit time) time series
 
@@ -62,10 +61,8 @@ A metadata time series is maintained which records average wait time for queries
 
 Here we introduce 1 new parameter: `decisionWindow`.
 The `MasterSubscribeController` polls the Metadata time series every `decisionWindow` intervals. The `decisionWindow` would typically be a multiple of the metadata time series `windowSize`.
-The `MasterSubscriberController` gets the latest available CPM available in the metadata time series, it also gets the max of the wait times for the entire decision window, if the latest wait time in the metadata time series is more than this max wait time over the decision window, a `potentialDownscaleDecision` is taken. After this the latest CPM available is compared with the desired CPM, if the latest CPM is lower than the desiredCPM, a `potentialUpscaleDecision` is taken. A `potentialDownscaleDecision` is always preferred over a `potentialUpscaleDecision`.
+The `MasterSubscriberController` gets the latest available CPM available in the metadata time series, it also gets the max of the wait times for the entire decision window, if the latest wait time in the metadata time series is more than this max wait time over the decision window, a potential downscale decision is taken. The downscale decision is also controlled by the CPM, a potential downscale decision is not taken already, the CPM is also compared with the desired CPM and if desired CPM is less, the following subscriber sleep time(for that queryType) is increased proportionally to the value of currentCPM - desiredCPM. If this new sleeptime is greater than the max sleep time, the number of subscriber instances is reduced by one
 
-TODOs:
+After this the latest CPM available is compared with the desired CPM, if the latest CPM is lower than the desiredCPM, the sleep time is decreased proportional to the value of desiredCPM - currentCPM. If this new sleep time is less than the min sleep time, the number of subsriber instances is incerased.
 
-- metadata controller locking must be removed instead use channels(message passing always wins over locking)
-- bulk ops at run phase
-- support of multiple tables for joins. This can be done using go-templates. normalized queries can be provided by the user, getQuery will no longer be used to generate queries, follow (this)[https://golang.org/pkg/text/template/] for reference
+A potential downscale decision is always preferred over a potential upscale decision.
