@@ -668,8 +668,8 @@ func main() {
 		c.publishChunkSize = int(runPhasePublishChunkSize)
 		c.publishSleepTime = -1
 		c.subscribeChunkSize = 1
-		c.minSubscribeSleepTime = 10
-		c.maxSubscribeSleepTime = 500
+		c.minSubscribeSleepTime = 500
+		c.maxSubscribeSleepTime = 5000
 		c.timeSeriesTick = int(timeSeriesTick)
 		c.pubSubComSignalSize = int(pubSubComSignalSize)
 		c.metricPollTick = int(metricPollTick)
