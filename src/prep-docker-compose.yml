@@ -25,9 +25,9 @@ services:
         "--port",
         "3306",
         "--database",
-        "bigbasket",
+        "rickilap",
         "--tablename",
-        "membercommunication_membercommunicationlog",
+        "ilapahsi",
         "--prepare",
       ]
     deploy:
