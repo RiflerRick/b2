@@ -1,7 +1,37 @@
 version: "3"
 services:
-  c4-debug:
-    image: c4-debug:latest
+  b2-prep:
+    image: b2:latest
+    network_mode: host
+    environment:
+      - INSERT_COMMITS_AFTER=1000
+      - TEMP_TABLE_PREP_SIZE_RATIO=0.80
+      - PREP_PHASE_CHUNK_SIZE=10000
+      - TEMP_TABLE_RUN_SIZE_RATIO=0.25
+      - RUN_PHASE_PUBLISH_CHUNK_SIZE=10000
+    command:
+      [
+        "./bombard",
+        "-v=2",
+        "-stderrthreshold=INFO",
+        "--host",
+        "localhost",
+        "--experiment-host",
+        "localhost",
+        "--username",
+        "root",
+        "--password",
+        "ilapahsi",
+        "--port",
+        "3306",
+        "--database",
+        "rickilap",
+        "--tablename",
+        "helloworld",
+        "--prepare",
+      ]
+  b2-run:
+    image: b2:latest
     network_mode: host
     environment:
       - INSERT_COMMITS_AFTER=1000
@@ -23,7 +53,7 @@ services:
         "--username",
         "root",
         "--password",
-        "root",
+        "ilapahsi",
         "--port",
         "3306",
         "--database",
@@ -31,18 +61,10 @@ services:
         "--time",
         "1",
         "--tablename",
-        "ilapahsi",
+        "helloworld",
         "--read-cpm",
         "1000",
         "--create-cpm",
         "2000",
         "--run",
       ]
-    deploy:
-      resources:
-        limits:
-          cpus: "1"
-          memory: 1G
-        reservations:
-          cpus: "0.8"
-          memory: 800M
