@@ -6,118 +6,71 @@ Text can be **bold**, _italic_, ~~strikethrough~~ or `keyword`.
 
 [Link to another page](./another-page.html).
 
-There should be whitespace between paragraphs.
+# B2
 
-There should be whitespace between paragraphs. We recommend including a README, or a file with information about your project.
+## Prep phase
 
-# Header 1
-
-This is a normal paragraph following a header. GitHub is a code hosting platform for version control and collaboration. It lets you and others work together on projects from anywhere.
-
-## Header 2
-
-> This is a blockquote following a header.
->
-> When something is important enough, you do it even if the odds are not in your favor.
-
-### Header 3
-
-```js
-// Javascript code with syntax highlighting.
-var fun = function lang(l) {
-  dateformat.i18n = require('./lang/' + l)
-  return true;
-}
+```bash
+docker-compose up c4-debug -f prep-docker-compose.yml
 ```
 
-```ruby
-# Ruby code with syntax highlighting
-GitHubPages::Dependencies.gems.each do |gem, version|
-  s.add_dependency(gem, "= #{version}")
-end
+## Bombard with itself
+
+DB benchmarking tools like sysbench and the like prepare their own tables, generate queries for their tables and hit those tables with it. If you know what your table is, you know what kind of data your table expects. However in this case, we are attempting to bombard a table whose structure we are not aware of beforehand.
+The table data itself can help us in bombarding the table with it. The following approach is therefore followed to do the same:
+
+prep-phase: we copy a percentage of data from the original table to a new temporary table preferably in a separate mysql database instance. Lets say this data starts from id x and goes till id y. Now from the original table, we can select rows between id x and id y and hit the temporary table with that data itself. This is important for a couple of reasons. First of all, if there are foreign keys of this table to any other table, randomly hitting such foreign key columns with values may result in an unprecendented number of foreign key constraint fails which may adversely affect the throughput, Moreover generating exactly the kind of data that may be stored in a column is a hard problem.
+The fact that we are trying to bombard queries of the same data as the original table may lead to an unprecedented number of unique/candidate key constraint fails as well which may also adversely affect the throughput. To handle this, just before the run phase, the chunk of data to be used for the run phase is taken as a chunk that appears before the prep chunk. This way, we can be sure there will be no clashes
+
+## Run phase
+
+The run phase will essentially select rows from the original table and perform CRUD operations on the temporary table. The `MasterPublishController` and the `MasterSubscriberController` controls the number of instances of publisher and consumers spun.
+The data resides in the `bus`.
+note: the `bus` is simply a channel of type
+
+```go
+*sql.Rows
 ```
 
-#### Header 4
+### Publisher
 
-*   This is an unordered list following a header.
-*   This is an unordered list following a header.
-*   This is an unordered list following a header.
+**We would always be having one publisher**
 
-##### Header 5
+The publisher is responsible for selecting rows from the original table and publishing to the bus. The chunk size of rows selected from the original table is controlled by `readChunkSize`. The `readChunkSize` is supplied as a pointer to the publisher instances by the `MasterPublishController`. The `MasterPublishController` will maintain a channel `stopSignal` of boolean type for signalling any publisher instance to stop.
 
-1.  This is an ordered list following a header.
-2.  This is an ordered list following a header.
-3.  This is an ordered list following a header.
+The `MasterPublishController` can control the rate of publishing data to the bus in 3 ways:
 
-###### Header 6
+- Increasing/Decreasing the number of publisher instances
+- Increasing/Decreasing the readChunkSize of each publisher instance
 
-| head1        | head two          | three |
-|:-------------|:------------------|:------|
-| ok           | good swedish fish | nice  |
-| out of stock | good and plenty   | nice  |
-| ok           | good `oreos`      | hmm   |
-| ok           | good `zoute` drop | yumm  |
+In any case, the bus cannot be empty, from the consumer instances, if the bus is empty, it sends the query type as a string to the channel that is received by the `MasterPublishController` and the `MasterSubscribeController`.
 
-### There's a horizontal rule below this.
+#### Upscaling the publisher instances
 
-* * *
+For now the straightforward solution is to simply spawn a new publish routine in case the any of the consumer instances notify that the bus is empty. Although later on more intelligence need to be provided when deciding the to do any of increasing/decreasing the number of publish instances, increasing/decreasing the sleep time for every publisher or increasing/decreasing the readChunkSize of each publisher instance.
 
-### Here is an unordered list:
-
-*   Item foo
-*   Item bar
-*   Item baz
-*   Item zip
-
-### And an ordered list:
-
-1.  Item one
-1.  Item two
-1.  Item three
-1.  Item four
-
-### And a nested list:
-
-- level 1 item
-  - level 2 item
-  - level 2 item
-    - level 3 item
-    - level 3 item
-- level 1 item
-  - level 2 item
-  - level 2 item
-  - level 2 item
-- level 1 item
-  - level 2 item
-  - level 2 item
-- level 1 item
-
-### Small image
-
-![Octocat](https://github.githubassets.com/images/icons/emoji/octocat.png)
-
-### Large image
-
-![Branching](https://guides.github.com/activities/hello-world/branching.png)
-
-
-### Definition lists can be used with HTML syntax.
-
-<dl>
-<dt>Name</dt>
-<dd>Godzilla</dd>
-<dt>Born</dt>
-<dd>1952</dd>
-<dt>Birthplace</dt>
-<dd>Japan</dd>
-<dt>Color</dt>
-<dd>Green</dd>
-</dl>
-
-```
-Long, single-line code blocks should not wrap. They should horizontally scroll if they are too long. This line should be long enough to demonstrate this.
+```text
+improvements req: control sleep time, control readChunkSize
 ```
 
-```
-The final element.
-```
+#### Downscaling the publisher instances
+
+Currently publishers are never downscaled, as they are upscaled only in need
+
+## Metadata(wait time and calls per unit time) time series
+
+A metadata time series is maintained which records average wait time for queries of a particular queryType and average calls per unit time averaged over a `windowSize` time period. The `windowSize` is critical here as it makes sure, the calls per unit time and wait time values for the corresponding queryType does not get affected by momentary blips
+
+### Subscriber
+
+**We would always be having atleast one subscriber**
+
+#### Upscaling and downscaling the subscriber instances
+
+Here we introduce 1 new parameter: `decisionWindow`.
+The `MasterSubscribeController` polls the Metadata time series every `decisionWindow` intervals. The `decisionWindow` would typically be a multiple of the metadata time series `windowSize`.
+The `MasterSubscriberController` gets the latest available CPM available in the metadata time series, it also gets the max of the wait times for the entire decision window, if the latest wait time in the metadata time series is more than this max wait time over the decision window, a potential downscale decision is taken. The downscale decision is also controlled by the CPM, a potential downscale decision is not taken already, the CPM is also compared with the desired CPM and if desired CPM is less, the following subscriber sleep time(for that queryType) is increased proportionally to the value of currentCPM - desiredCPM. If this new sleeptime is greater than the max sleep time, the number of subscriber instances is reduced by one
+
+After this the latest CPM available is compared with the desired CPM, if the latest CPM is lower than the desiredCPM, the sleep time is decreased proportional to the value of desiredCPM - currentCPM. If this new sleep time is less than the min sleep time, the number of subsriber instances is incerased.
+
+A potential downscale decision is always preferred over a potential upscale decision.
