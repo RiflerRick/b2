@@ -9,6 +9,7 @@ services:
       - PREP_PHASE_CHUNK_SIZE=10000
       - TEMP_TABLE_RUN_SIZE_RATIO=0.25
       - RUN_PHASE_PUBLISH_CHUNK_SIZE=10000
+      - APPROX_TABLE_SIZE=102157035
     command:
       [
         "./bombard",
@@ -41,6 +42,7 @@ services:
       - RUN_PHASE_PUBLISH_CHUNK_SIZE=10000
       - TIME_SERIES_TICK_MS=1000
       - METRIC_POLL_TICK_MS=1000
+      - APPROX_TABLE_SIZE=102157035
     command:
       [
         "./bombard",
